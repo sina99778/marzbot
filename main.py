@@ -21,8 +21,10 @@ import os
 from dotenv import load_dotenv
 from telegram.error import TimedOut, NetworkError
 from telegram import (
-    Update, KeyboardButton, ReplyKeyboardMarkup,
-    InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, InputFile
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputFile,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -1053,18 +1055,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if result:
         if await is_member(user_id, context):
-            await update.message.reply_text("""
-            🎉 خوش اومدی!  
-            """)
             await main_menu(update, context)
         else:
             await send_join_prompt(update)
         return
     if ref_code:
         context.user_data["ref_code_used"] = ref_code
-    button = KeyboardButton("📱 ارسال شماره", request_contact=True)
-    markup = ReplyKeyboardMarkup([[button]], resize_keyboard=True, one_time_keyboard=True)
-    await update.message.reply_text("📲 لطفا شماره خود را ارسال کنید با استفاده از گزینه ی پایین", reply_markup=markup)
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📱 ارسال شماره", callback_data="request_contact")
+    ]])
+    await update.message.reply_text(
+        "📲 لطفا شماره خود را ارسال کنید با استفاده از گزینه ی پایین",
+        reply_markup=keyboard
+    )
 
 
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1092,10 +1095,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ref_code=ref_code,
     )
 
-    msg = await update.message.reply_text(
-        "✅ شماره با موفقیت ثبت شد.",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    msg = await update.message.reply_text("✅ شماره با موفقیت ثبت شد.")
     context.user_data.setdefault("bot_messages", []).append(msg.message_id)
     await send_join_prompt(update)
 
@@ -1184,22 +1184,22 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("?? ???????", callback_data="profile_panel"),
-            InlineKeyboardButton("?? ???? ????", callback_data="buy_panel_open")
+            InlineKeyboardButton("👤 پروفایل", callback_data="profile_panel"),
+            InlineKeyboardButton("💰 خرید سرور", callback_data="buy_panel_open")
         ],
         [
-            InlineKeyboardButton("?? ????? ?????", callback_data="guid"),
-            InlineKeyboardButton("?? ??? ???", callback_data="wallet_panel")
+            InlineKeyboardButton("🎓 آموزش", callback_data="guid"),
+            InlineKeyboardButton("💼 کیف پول", callback_data="wallet_panel")
         ],
-        [InlineKeyboardButton("??? ????????", callback_data="support_panel")]
+        [InlineKeyboardButton("🛠️ پشتیبانی", callback_data="support_panel")]
     ])
 
     if is_admin(user_id):
-        keyboard.inline_keyboard.append([InlineKeyboardButton("?? ??? ?????", callback_data="admin_panel")])
+        keyboard.inline_keyboard.append([InlineKeyboardButton("⚙️ پنل ادمین", callback_data="admin_panel")])
 
     await context.bot.send_message(
         chat_id=user_id,
-        text="???? ?????? ?? ???? ????? ??? ????? ??? ?? ???????? ??? ?? ???? ??",
+        text="برای مدیریت یا خرید سرویس فقط کافیه یکی از دکمه‌های زیر رو بزنی 👇",
         reply_markup=keyboard
     )
 
@@ -1216,9 +1216,9 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
                 from_chat_id=update.effective_chat.id,
                 message_id=update.message.message_id
             )
-            await update.message.reply_text("? ????/???? ?? ?????? ????? ??.")
+            await update.message.reply_text("✅ پیام/مدیا با موفقیت ارسال شد.")
         except Exception as e:
-            await update.message.reply_text(f"? ????? ?????? ???: {e}")
+            await update.message.reply_text(f"❌ ارسال ناموفق بود: {e}")
 
         clear_user_state(context)
         context.user_data.pop("target_user_internal_id", None)
@@ -1274,7 +1274,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         await handle_wallet_amount(update, context)
         return
     if state == STATE_AWAITING_WALLET_RECEIPT:
-        await update.message.reply_text("?? ????? ??? ???? ?? ????? ????. ???? ???: /start")
+        await update.message.reply_text("⚠️ لطفاً عکس رسید را ارسال کنید. برای لغو: /start")
         return
     if state == STATE_AWAITING_PROMO_PERCENT:
         await handle_promo_percent_input(update, context)
@@ -1283,7 +1283,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         await handle_promo_end_input(update, context)
         return
 
-    await update.message.reply_text("?? ????? ??????? ???. ???? ????? ?? ???? ???? ?? /start ??????? ????.")
+    await update.message.reply_text("‼️ دستور نامعتبر است. برای برگشت به منوی اصلی از /start استفاده کنید.")
 
 async def show_wallet_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("show_wallet_panel tg_user=%s", getattr(update.effective_user, "id", None))
@@ -1298,15 +1298,19 @@ async def show_wallet_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     set_user_state(context, STATE_AWAITING_WALLET_AMOUNT)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✨ 200,000 تومان", callback_data="wallet_amount_200000"),
-         InlineKeyboardButton("🔥 500,000 تومان", callback_data="wallet_amount_500000")],
-        [InlineKeyboardButton("💎 1,000,000 تومان", callback_data="wallet_amount_1000000")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="return_main_menu")]
+        [
+            InlineKeyboardButton("✨ 200,000 تومان", callback_data="wallet_amount_200000"),
+            InlineKeyboardButton("🔥 500,000 تومان", callback_data="wallet_amount_500000")
+        ],
+        [
+            InlineKeyboardButton("💎 1,000,000 تومان", callback_data="wallet_amount_1000000"),
+            InlineKeyboardButton("🔙 بازگشت", callback_data="return_main_menu")
+        ]
     ])
     await update.effective_message.reply_text(
         "💼 <b>کیف پول شما</b>\n\n"
         f"💰 <b>موجودی:</b> {wallet_balance:,} تومان\n"
-        "عدد شارژ را بفرستید یا یکی از مبلغ‌های آماده را انتخاب کنید.",
+        "مبلغ شارژ را بفرستید یا یکی از دکمه‌های آماده را انتخاب کنید.",
         parse_mode="HTML",
         reply_markup=keyboard
     )
@@ -1681,10 +1685,7 @@ async def handle_wallet_admin_cb(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def handle_support_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    loading_msg = await update.effective_message.reply_text(
-        "⌛ لطفا صبر کنید...",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    loading_msg = await update.effective_message.reply_text("⌛ لطفا صبر کنید...")
     await asyncio.sleep(0.5)
     try:
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=loading_msg.message_id)
@@ -1723,10 +1724,13 @@ async def confirm_support_message_panel(update: Update, context: ContextTypes.DE
 
 
 async def show_buy_server_panel(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                                message="💎 خوش آمدبد به پنل خرید سرور"):
+                                message="💎 به پنل خرید سرور خوش آمدید"):
     context.user_data.clear()
     set_user_state(context, STATE_BACK_BUY_SERVER_PANEL)
-    buttons = [[InlineKeyboardButton("💎 خرید سرور", callback_data="buy_panel_open")]]
+    buttons = [[
+        InlineKeyboardButton("💎 خرید سرور", callback_data="buy_panel_open"),
+        InlineKeyboardButton("🔥 پلن‌ها", callback_data="buy_panel_open")
+    ]]
     config = q_one("""
         SELECT t.is_active, s.name, t.inbound_id, t.traffic_gb, t.duration_days
         FROM test_server_config t
@@ -1735,7 +1739,7 @@ async def show_buy_server_panel(update: Update, context: ContextTypes.DEFAULT_TY
     """)
 
     if config and config[0]:
-        buttons[0].append(InlineKeyboardButton("🎁 سرور تست", callback_data="buy_panel_test"))
+        buttons.append([InlineKeyboardButton("🎁 سرور تست", callback_data="buy_panel_test")])
     buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="return_main_menu")])
     markup = InlineKeyboardMarkup(buttons)
     if update.message:
@@ -1749,12 +1753,18 @@ async def show_profile_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     set_user_state(context, STATE_BACK_PROFILE_PANEL)
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✨ اطلاعات کاربر", callback_data="profile_user_info"),
-         InlineKeyboardButton("💎 کانفیگ‌های من", callback_data="return_user_purchased")],
-        [InlineKeyboardButton("🔥 بررسی سرور دلخواه", callback_data="profile_custom_server"),
-         InlineKeyboardButton("👥 لینک دعوت من", callback_data="profile_referral")],
-        [InlineKeyboardButton("🎁 درخواست جایزه", callback_data="profile_reward")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="return_main_menu")]
+        [
+            InlineKeyboardButton("✨ اطلاعات کاربر", callback_data="profile_user_info"),
+            InlineKeyboardButton("💎 کانفیگ‌های من", callback_data="return_user_purchased")
+        ],
+        [
+            InlineKeyboardButton("🔥 بررسی سرور", callback_data="profile_custom_server"),
+            InlineKeyboardButton("👥 لینک دعوت", callback_data="profile_referral")
+        ],
+        [
+            InlineKeyboardButton("🎁 درخواست جایزه", callback_data="profile_reward"),
+            InlineKeyboardButton("🔙 بازگشت", callback_data="return_main_menu")
+        ]
     ])
     if update.message:
         await update.message.reply_text("🔧 لطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=keyboard)
@@ -3810,58 +3820,62 @@ async def handle_panel_shortcuts(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     data = query.data
 
-    if data == "buy_panel_open":
+    if data == "profile_panel":
+        await show_profile_panel(update, context)
+    elif data == "buy_panel_open":
         await show_categories_panel(update, context)
     elif data == "buy_panel_test":
         await handle_test_server_request(update, context)
-    elif data == "admin_panel":
-        await show_admin_panel(update, context)
     elif data == "wallet_panel":
         await show_wallet_panel(update, context)
     elif data == "support_panel":
         await handle_support_panel(update, context)
-    elif data == "profile_panel":
-        await show_profile_panel(update, context)
+    elif data == "admin_panel":
+        await show_admin_panel(update, context)
     elif data == "guid":
-        await update.effective_message.reply_text("???? ??? ???? ??? ?????? ????")
+        await query.message.reply_text("فعلا این قسمت راه اندازی نشده")
+    elif data == "request_contact":
+        await query.message.reply_text("📱 لطفاً شماره خودتان را از بخش Contact تلگرام برای ربات ارسال کنید.")
+    elif data == "return_main_menu":
+        await main_menu(update, context)
     elif data == "admin_panel_users":
         await query.edit_message_text(
-            "?? <b>?????? ???????</b>",
+            "👥 <b>مدیریت کاربران</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("?? ????? ???? ???????", callback_data="users_page_1")],
-                [InlineKeyboardButton("?? ?????? ?????", callback_data="search_user")],
-                [InlineKeyboardButton("?? ??????", callback_data="back_admin_panel")]
+                [InlineKeyboardButton("📋 نمایش لیست کاربران", callback_data="users_page_1")],
+                [InlineKeyboardButton("🔍 جستجوی کاربر", callback_data="search_user")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin_panel")]
             ])
         )
     elif data == "admin_panel_support":
         await query.edit_message_text(
-            "?? <b>?????? ???????? ????????</b>",
+            "📨 <b>مدیریت پیام‌های پشتیبانی</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("?? ??? ???????", callback_data="all_message_1")],
-                [InlineKeyboardButton("? ?????????????", callback_data="unanswered_message_1")],
-                [InlineKeyboardButton("?? ??????", callback_data="back_admin_panel")]
+                [InlineKeyboardButton("📋 همه پیام‌ها", callback_data="all_message_1")],
+                [InlineKeyboardButton("❗ پاسخ‌نداده‌ها", callback_data="unanswered_message_1")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin_panel")]
             ])
         )
     elif data == "admin_panel_servers":
         await query.edit_message_text(
-            "?? <b>?????? ??????</b>",
+            "⚙️ <b>مدیریت سرورها</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("?? ????? ??????", callback_data="return_servers"),
-                 InlineKeyboardButton("?? ???? ???", callback_data="edit_test_config")],
-                [InlineKeyboardButton("?? ????? ??????? ????", callback_data="server_plans")],
-                [InlineKeyboardButton("?? ??????", callback_data="back_admin_panel")]
+                [InlineKeyboardButton("📊 نمایش سرورها", callback_data="return_servers"),
+                 InlineKeyboardButton("⚙️ سرور تست", callback_data="edit_test_config")],
+                [InlineKeyboardButton("📦 تعیین طرح‌های فروش", callback_data="server_plans")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin_panel")]
             ])
         )
     elif data == "admin_panel_sales":
         await query.edit_message_text(
-            "?? <b>?????? ??????? ??????????</b>",
+            "🧾 <b>مدیریت طرح‌های فروخته‌شده</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("?? ?????? ???????", callback_data="admin_panel_users")],
-                [InlineKeyboardButton("?? ??????", callback_data="back_admin_panel")]
+                [InlineKeyboardButton("👥 مدیریت کاربران", callback_data="admin_panel_users")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin_panel")]
             ])
         )
 
@@ -3872,10 +3886,7 @@ async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not is_admin(user_id):
         return
     if text == "👥 مدیریت کاربران":
-        loading_msg = await update.message.reply_text(
-            "⌛ در حال دریافت اطلاعات...",
-            reply_markup=ReplyKeyboardRemove()
-        )
+        loading_msg = await update.message.reply_text("⌛ در حال دریافت اطلاعات...")
         await asyncio.sleep(0.5)
         try:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=loading_msg.message_id)
@@ -3893,10 +3904,7 @@ async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode="HTML"
         )
     elif text == "📨 پاسخ به پیام‌های پشتیبانی":
-        loading_msg = await update.message.reply_text(
-            "⌛ در حال دریافت اطلاعات...",
-            reply_markup=ReplyKeyboardRemove()
-        )
+        loading_msg = await update.message.reply_text("⌛ در حال دریافت اطلاعات...")
         await asyncio.sleep(0.5)
         try:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=loading_msg.message_id)
@@ -3939,13 +3947,7 @@ async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text += "──────────────────────\n"
 
         await update.message.reply_text(text, parse_mode="HTML")
-        buttons = [
-            [KeyboardButton("➕ افزودن ادمین"), KeyboardButton("➖ حذف ادمین")],
-            [KeyboardButton("🔙 بازگشت به منوی ادمین")]
-        ]
-        markup = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-
-        await update.message.reply_text("یکی از گزیته ها را انتخاب کنید", reply_markup=markup)
+        await update.message.reply_text("برای ادامه از دکمه‌های اینلاین پنل ادمین استفاده کنید.")
     if text == "➕ افزودن ادمین":
         context.user_data["awaiting_admin_id"] = True
         await update.message.reply_text("🆔 لطفاً آیدی عددی کاربر را برای افزودن ارسال کنید:")
@@ -3986,13 +3988,7 @@ async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if text == "⚙️ تنظیمات سرور‌ها":
         set_user_state(context, STATE_BACK_SETUP_SERVERS)
-        buttons = [
-            [KeyboardButton("➕ افزودن سرور"), KeyboardButton("📊 نمایش سرورها")],
-            [KeyboardButton('⚙️ تنظیمات سرور تست'), KeyboardButton("📦 تعیین طرح‌های فروش")],
-            [KeyboardButton("↩️ بازگشت")]
-        ]
-        markup = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-        await update.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید: 🔽", reply_markup=markup)
+        await show_admin_panel(update, context)
         return
     if text == "⚙️ تنظیمات سرور تست":
         config = q_one("""
@@ -4172,7 +4168,7 @@ async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
     if text == "➕ افزودن سرور":
         context.user_data["adding_server"] = {"step": "name"}
-        await update.message.reply_text("🔠 نام سرور را وارد کنید:", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("🔠 نام سرور را وارد کنید:")
         return
     if "adding_server" in context.user_data:
         step = context.user_data["adding_server"]["step"]
@@ -4255,10 +4251,7 @@ async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
             SELECT name FROM servers ORDER BY created_at ASC
         """)
 
-        loading_msg = await update.message.reply_text(
-            "⌛ در حال دریافت لیست سرورها...",
-            reply_markup=ReplyKeyboardRemove()
-        )
+        loading_msg = await update.message.reply_text("⌛ در حال دریافت لیست سرورها...")
         await asyncio.sleep(0.5)
         try:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=loading_msg.message_id)
@@ -4293,10 +4286,7 @@ async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
         buttons.append([InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="return_setup_server_menu")])
 
         keyboard = InlineKeyboardMarkup(buttons)
-        loading_msg = await update.message.reply_text(
-            "⌛ در حال دریافت لیست طرح‌های فروش...",
-            reply_markup=ReplyKeyboardRemove()
-        )
+        loading_msg = await update.message.reply_text("⌛ در حال دریافت لیست طرح‌های فروش...")
         await asyncio.sleep(0.5)
         try:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=loading_msg.message_id)
@@ -4392,11 +4382,7 @@ async def show_promo_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     kb = InlineKeyboardMarkup(buttons)
 
-    await update.effective_message.reply_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    await update.effective_message.reply_text(text, parse_mode="HTML")
     await update.effective_message.reply_text("گزینه‌ها:", reply_markup=kb)
 
 
@@ -5872,14 +5858,7 @@ async def handle_return_setup_server_menu_callback(update: Update, context: Cont
             except:
                 pass
         context.user_data.pop("delete_after_return", None)
-        set_user_state(context, STATE_BACK_SETUP_SERVERS)
-        buttons = [
-            [KeyboardButton("➕ افزودن سرور"), KeyboardButton("📊 نمایش سرورها")],
-            [KeyboardButton('⚙️ تنظیمات سرور تست'), KeyboardButton("📦 تعیین طرح‌های فروش")],
-            [KeyboardButton("↩️ بازگشت")]
-        ]
-        markup = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-        await query.message.reply_text("لطفاً یکی از گزینه‌ها را انتخاب کنید: 🔽", reply_markup=markup)
+        await show_admin_panel(update, context)
         return
 
 
@@ -6121,7 +6100,7 @@ async def handle_server_plans_callback(update: Update, context: ContextTypes.DEF
             "step": "traffic_gb",
             "category_id": context.user_data.get("current_category_id")
         })
-        await query.message.reply_text("🔢 مقدار ترافیک (گیگابایت) را وارد کنید:", reply_markup=ReplyKeyboardRemove())
+        await query.message.reply_text("🔢 مقدار ترافیک (گیگابایت) را وارد کنید:")
         return
 
 
@@ -6737,6 +6716,12 @@ def main():
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(CommandHandler("wallet", show_wallet_panel))
 
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_panel_shortcuts,
+            pattern=r"^(profile_panel|buy_panel_open|buy_panel_test|wallet_panel|support_panel|admin_panel|guid|return_main_menu|request_contact|admin_panel_users|admin_panel_servers|admin_panel_support|admin_panel_sales)$",
+        )
+    )
     app.add_handler(CallbackQueryHandler(handle_promo_callbacks, pattern=r"^promo_"))
     app.add_handler(CallbackQueryHandler(handle_sync_callbacks, pattern=r"^sync_"))
     app.add_handler(CallbackQueryHandler(handle_user_message_callback, pattern=r"^user_message_\d+$"))
@@ -6746,8 +6731,6 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_reward_callback, pattern=r"^reward_(approve|reject)_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_wallet_admin_cb, pattern=r"^wallet_(appr|rej)_\d+$"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_wallet_receipt_photo))
-    app.add_handler(CallbackQueryHandler(handle_panel_shortcuts, pattern=r"^(buy_panel_open|buy_panel_test|admin_panel|wallet_panel|support_panel|profile_panel|guid|admin_panel_users|admin_panel_servers|admin_panel_support|admin_panel_sales)$"))
-    app.add_handler(CallbackQueryHandler(handle_return_main_menu_callback, pattern="^return_main_menu$"))
     app.add_handler(CallbackQueryHandler(handle_profile_panel, pattern=r"^(profile_user_info|profile_custom_server|profile_referral|profile_reward)$"))
     app.add_handler(CallbackQueryHandler(handle_user_view_category_callback, pattern=r"^user_view_category_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_back_navigation, pattern="^user_back$"))
