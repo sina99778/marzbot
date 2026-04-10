@@ -46,6 +46,8 @@ NOWPAYMENTS_BASE_URL = os.getenv("NOWPAYMENTS_BASE_URL", "https://api.nowpayment
 NOWPAYMENTS_PRICE_CURRENCY = os.getenv("NOWPAYMENTS_PRICE_CURRENCY", "usd")
 NOWPAYMENTS_PAY_CURRENCY = os.getenv("NOWPAYMENTS_PAY_CURRENCY", "usdttrc20")
 USD_TO_TOMAN_RATE = float(os.getenv("USD_TO_TOMAN_RATE", "100000"))
+NOWPAYMENTS_RATE_LIMIT = {}
+NOWPAYMENTS_RATE_LIMIT_SECONDS = 5
 
 FIELD_MAP = {
     "url": "base_url",
@@ -886,10 +888,11 @@ def find_panel_client(inbound_list: dict, inbound_id, client_uuid: str):
     return None
 
 
-def format_purchased_plan_detail_text(*, name, status, reason_block, url, remark, purchase_date, expiry_date,
-                                      used_show, max_gb, remaining_gb, up_gb, down_gb):
+def format_purchased_plan_detail_text(*, name, status, reason_block, url, subscription_url, remark, purchase_date,
+                                      expiry_date, used_show, max_gb, remaining_gb, up_gb, down_gb):
     exp_txt = expiry_date.strftime("%Y-%m-%d %H:%M") if expiry_date else "—"
     pur_txt = purchase_date.strftime("%Y-%m-%d %H:%M") if purchase_date else "—"
+    subscription_block = f"✨ <b>لینک اشتراک:</b>\n<code>{subscription_url}</code>\n" if subscription_url else ""
     return (
         "<b>📡 اطلاعات سرویس</b>\n"
         f"وضعیت سرویس: {status}{reason_block}\n"
@@ -897,6 +900,7 @@ def format_purchased_plan_detail_text(*, name, status, reason_block, url, remark
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>🖥 اطلاعات اتصال</b>\n"
         f"🔗 <b>لینک اتصال:</b>\n<code>{url}</code>\n"
+        f"{subscription_block}"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>🔖 جزئیات طرح</b>\n"
         f"📦 <b>نام پلن:</b> {remark}\n"
@@ -1450,6 +1454,12 @@ async def handle_nowpayment_callback(update: Update, context: ContextTypes.DEFAU
     await query.answer()
     data = query.data
     tg_user_id = query.from_user.id
+    now_ts = time.time()
+    last_ts = NOWPAYMENTS_RATE_LIMIT.get(tg_user_id, 0)
+    if now_ts - last_ts < NOWPAYMENTS_RATE_LIMIT_SECONDS:
+        await query.answer("کمی صبر کنید و دوباره تلاش کنید.", show_alert=True)
+        return
+    NOWPAYMENTS_RATE_LIMIT[tg_user_id] = now_ts
 
     if data == "nowpayment_wallet":
         amount = int(context.user_data.get("charge_amount") or 0)
@@ -1874,13 +1884,12 @@ async def handle_test_server_request(update: Update, context: ContextTypes.DEFAU
 async def handle_buy_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
-    user_username = update.effective_user.username
 
-    loading_msg = await update.message.reply_text("⏳ در حال پردازش...", reply_markup=ReplyKeyboardRemove())
+    loading_msg = await update.message.reply_text("⏳ در حال پردازش...")
     await asyncio.sleep(0.4)
     try:
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=loading_msg.message_id)
-    except:
+    except Exception:
         pass
 
     if text == '🎁 دریافت سرور تست':
@@ -1891,7 +1900,7 @@ async def handle_buy_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id == ADMIN_ID:
             await show_categories_panel(update, context)
         else:
-            update.message.reply_text("خرید متوقف شده")
+            await update.message.reply_text("خرید فقط از مسیر دکمه‌های اینلاین فعال است.")
 
 
 async def show_categories_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5286,6 +5295,13 @@ async def handle_search_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 referrer_str = f"@{ref_username}"
             elif ref_name:
                 referrer_str = ref_name
+    plan_rows = q_all("""
+        SELECT id, name, is_active, expiry_date, config_data ->> 'subscription_url'
+        FROM purchased_plans
+        WHERE user_id = %s
+        ORDER BY purchase_date DESC
+        LIMIT 5
+    """, (user_id,))
     response = (
         f"👤 <b>اطلاعات کاربر:</b>\n"
         f"🆔 آیدی عددی: <code>{telegram_user_id}</code>\n"
@@ -5305,6 +5321,15 @@ async def handle_search_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"🙋‍♂️ <b>معرف:</b> {referrer_str}\n"
         f"🛒 <b>نمایش شماره کارت:</b> {'✅ فعال' if cart_visibility else '❌ غیرفعال'}"
     )
+    if plan_rows:
+        response += "\n\n📦 <b>آخرین پلن‌ها:</b>\n"
+        for plan_id, plan_name, plan_active, expiry_date, subscription_url in plan_rows:
+            active_label = "✅" if plan_active else "❌"
+            sub_label = " | ✨ لینک اشتراک" if subscription_url else ""
+            response += (
+                f"• <code>{plan_id}</code> | {active_label} {plan_name or 'بدون نام'}"
+                f" | {expiry_date.strftime('%Y-%m-%d') if expiry_date else '-'}{sub_label}\n"
+            )
     toggle_label = "⛔ غیرفعال‌کردن" if status == "active" else "✅ فعال‌کردن"
     buttons = [
         [
@@ -5323,10 +5348,15 @@ async def handle_search_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
             InlineKeyboardButton('✉️ ارسال پیام', callback_data=f"user_message_{user_id}"),
             InlineKeyboardButton('🔄 فعال/غیرفعال سازی نمایش شماره کارت', callback_data=f"user_cart_vis_{user_id}")
         ],
-        [
-            InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_user_manage_menu")
-        ]
     ]
+    for plan_id, plan_name, plan_active, expiry_date, subscription_url in plan_rows:
+        buttons.append([
+            InlineKeyboardButton(f"👁 {plan_id}", callback_data=f"user_purchased_plan_{plan_id}"),
+            InlineKeyboardButton("🔄 تمدید", callback_data=f"renewal_purchased_plan_{plan_id}"),
+            InlineKeyboardButton("⚡ وضعیت", callback_data=f"dis_able_purchased_plan_{plan_id}"),
+            InlineKeyboardButton("🗑 حذف", callback_data=f"delete_purchased_plan_{plan_id}")
+        ])
+    buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_user_manage_menu")])
     markup = InlineKeyboardMarkup(buttons)
     await message_source.reply_text(response, parse_mode="HTML", reply_markup=markup)
     clear_timed_value(context, "search_by")
@@ -5375,6 +5405,7 @@ async def handle_user_plans_callback(update: Update, context: ContextTypes.DEFAU
     rows = q_all("""
         SELECT id,
                config_data ->> 'remark' AS remark,
+               config_data ->> 'subscription_url' AS subscription_url,
                expiry_date,
                is_active
         FROM purchased_plans
@@ -5388,9 +5419,10 @@ async def handle_user_plans_callback(update: Update, context: ContextTypes.DEFAU
 
     text = f"📦 <b>پلن‌های کاربر (صفحه {page}/{total_pages}):</b>\n\n"
     buttons = []
-    for plan_id, remark, expiry, active in rows:
+    for plan_id, remark, subscription_url, expiry, active in rows:
         active_str = "✅ فعال" if active else "❌ غیرفعال"
-        text += f"🔹 <code>{remark}</code>\n📅 انقضا: {expiry.strftime('%Y-%m-%d')} | {active_str}\n\n"
+        sub_line = f"\n✨ اشتراک: <code>{subscription_url}</code>" if subscription_url else ""
+        text += f"🔹 <code>{remark}</code>\n📅 انقضا: {expiry.strftime('%Y-%m-%d')} | {active_str}{sub_line}\n\n"
         buttons.append([
             InlineKeyboardButton(f"👁 {plan_id}", callback_data=f"user_purchased_plan_{plan_id}"),
             InlineKeyboardButton("🔄 تمدید", callback_data=f"renewal_purchased_plan_{plan_id}"),
