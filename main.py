@@ -1175,7 +1175,6 @@ def is_admin(user_id):
 
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    username = update.effective_user.username
     old_messages = context.user_data.get("bot_messages", [])
     for msg_id in old_messages:
         try:
@@ -1183,26 +1182,26 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-    profile_button = KeyboardButton("👤 پروفایل")
-    buy_server_button = KeyboardButton("💰 خرید سرور نیم بها")
-    guid_button = KeyboardButton("🎓 آموزش اتصال")
-    wallet_button = KeyboardButton("💼 کیف پول")
-    support_button = KeyboardButton("🛠️ پشتیبانی")
-    admin_panel_button = KeyboardButton("⚙️ پنل ادمین")
-    buttons = [
-        [profile_button, buy_server_button],
-        [guid_button, wallet_button],
-        [support_button]
-    ]
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("?? ???????", callback_data="profile_panel"),
+            InlineKeyboardButton("?? ???? ????", callback_data="buy_panel_open")
+        ],
+        [
+            InlineKeyboardButton("?? ????? ?????", callback_data="guid"),
+            InlineKeyboardButton("?? ??? ???", callback_data="wallet_panel")
+        ],
+        [InlineKeyboardButton("??? ????????", callback_data="support_panel")]
+    ])
 
     if is_admin(user_id):
-        buttons.append([admin_panel_button])
+        keyboard.inline_keyboard.append([InlineKeyboardButton("?? ??? ?????", callback_data="admin_panel")])
 
-    markup = ReplyKeyboardMarkup(buttons, resize_keyboard=True, one_time_keyboard=True)
-    await context.bot.send_message(chat_id=user_id, text="""
-    برای مدیریت یا خرید سرویس فقط کافیه یکی از دکمه‌های زیر رو بزنی 👇
-    """, reply_markup=markup)
-
+    await context.bot.send_message(
+        chat_id=user_id,
+        text="???? ?????? ?? ???? ????? ??? ????? ??? ?? ???????? ??? ?? ???? ??",
+        reply_markup=keyboard
+    )
 
 async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("handle_menu_selection tg_user=%s", getattr(update.effective_user, "id", None))
@@ -1217,9 +1216,9 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
                 from_chat_id=update.effective_chat.id,
                 message_id=update.message.message_id
             )
-            await update.message.reply_text("✅ پیام/مدیا با موفقیت ارسال شد.")
+            await update.message.reply_text("? ????/???? ?? ?????? ????? ??.")
         except Exception as e:
-            await update.message.reply_text(f"❌ ارسال ناموفق بود: {e}")
+            await update.message.reply_text(f"? ????? ?????? ???: {e}")
 
         clear_user_state(context)
         context.user_data.pop("target_user_internal_id", None)
@@ -1257,38 +1256,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     if get_timed_value(context, "awaiting_change_discount"):
         await handle_user_discount_percentage(update, context)
         return
-    text = update.message.text
-    if text == "↩️ بازگشت":
-        if state == STATE_BACK_ADMIN_PANEL:
-            await main_menu(update, context)
-        elif state == STATE_BACK_SETUP_SERVERS:
-            await show_admin_panel(update, context, message="🌐 شما به پنل ادمین برگشتید")
-        elif state == STATE_BACK_BUY_SERVER_PANEL:
-            await main_menu(update, context)
-        elif state == STATE_BACK_PROFILE_PANEL:
-            await main_menu(update, context)
-        elif state is None:
-            await main_menu(update, context)
-        return
-    if text == "⚙️ پنل ادمین":
-        await show_admin_panel(update, context)
-        return
-    elif text == "💰 خرید سرور نیم بها":
-        await show_buy_server_panel(update, context)
-        return
-    elif text == "👤 پروفایل":
-        await show_profile_panel(update, context)
-        return
-    elif text == "🎓 آموزش اتصال":
-        await update.effective_message.reply_text("فعلا این قسمت راه اندازی نشده")
-    elif text == "💼 کیف پول":
-        await show_wallet_panel(update, context)
-        return
     if state in [STATE_BACK_ADMIN_PANEL, STATE_BACK_SETUP_SERVERS]:
         await handle_admin_panel(update, context)
-        return
-    elif text == "🛠️ پشتیبانی":
-        await handle_support_panel(update, context)
         return
     if state == STATE_BACK_PROFILE_PANEL:
         await handle_profile_panel(update, context)
@@ -1305,18 +1274,16 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         await handle_wallet_amount(update, context)
         return
     if state == STATE_AWAITING_WALLET_RECEIPT:
-        await update.message.reply_text("⚠️ لطفاً عکس رسید را ارسال کنید. برای لغو: /start")
+        await update.message.reply_text("?? ????? ??? ???? ?? ????? ????. ???? ???: /start")
         return
     if state == STATE_AWAITING_PROMO_PERCENT:
         await handle_promo_percent_input(update, context)
         return
-
     if state == STATE_AWAITING_PROMO_END:
         await handle_promo_end_input(update, context)
         return
 
-    await update.message.reply_text("‼️ دستور نامعتبر است. برای برگشت به منوی اصلی از /start استفاده کنید.")
-
+    await update.message.reply_text("?? ????? ??????? ???. ???? ????? ?? ???? ???? ?? /start ??????? ????.")
 
 async def show_wallet_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("show_wallet_panel tg_user=%s", getattr(update.effective_user, "id", None))
@@ -3842,57 +3809,61 @@ async def handle_panel_shortcuts(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
     data = query.data
+
     if data == "buy_panel_open":
         await show_categories_panel(update, context)
-        return
-    if data == "buy_panel_test":
+    elif data == "buy_panel_test":
         await handle_test_server_request(update, context)
-        return
-    if data == "admin_panel_users":
+    elif data == "admin_panel":
+        await show_admin_panel(update, context)
+    elif data == "wallet_panel":
+        await show_wallet_panel(update, context)
+    elif data == "support_panel":
+        await handle_support_panel(update, context)
+    elif data == "profile_panel":
+        await show_profile_panel(update, context)
+    elif data == "guid":
+        await update.effective_message.reply_text("???? ??? ???? ??? ?????? ????")
+    elif data == "admin_panel_users":
         await query.edit_message_text(
-            "👥 <b>مدیریت کاربران</b>",
+            "?? <b>?????? ???????</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📋 نمایش لیست کاربران", callback_data="users_page_1")],
-                [InlineKeyboardButton("🔍 جستجوی کاربر", callback_data="search_user")],
-                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin_panel")]
+                [InlineKeyboardButton("?? ????? ???? ???????", callback_data="users_page_1")],
+                [InlineKeyboardButton("?? ?????? ?????", callback_data="search_user")],
+                [InlineKeyboardButton("?? ??????", callback_data="back_admin_panel")]
             ])
         )
-        return
-    if data == "admin_panel_support":
+    elif data == "admin_panel_support":
         await query.edit_message_text(
-            "📨 <b>مدیریت پیام‌های پشتیبانی</b>",
+            "?? <b>?????? ???????? ????????</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📋 همه پیام‌ها", callback_data="all_message_1")],
-                [InlineKeyboardButton("❗ پاسخ‌نداده‌ها", callback_data="unanswered_message_1")],
-                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin_panel")]
+                [InlineKeyboardButton("?? ??? ???????", callback_data="all_message_1")],
+                [InlineKeyboardButton("? ?????????????", callback_data="unanswered_message_1")],
+                [InlineKeyboardButton("?? ??????", callback_data="back_admin_panel")]
             ])
         )
-        return
-    if data == "admin_panel_servers":
+    elif data == "admin_panel_servers":
         await query.edit_message_text(
-            "⚙️ <b>مدیریت سرورها</b>",
+            "?? <b>?????? ??????</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📊 نمایش سرورها", callback_data="return_servers"),
-                 InlineKeyboardButton("⚙️ سرور تست", callback_data="edit_test_config")],
-                [InlineKeyboardButton("📦 تعیین طرح‌های فروش", callback_data="server_plans")],
-                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin_panel")]
+                [InlineKeyboardButton("?? ????? ??????", callback_data="return_servers"),
+                 InlineKeyboardButton("?? ???? ???", callback_data="edit_test_config")],
+                [InlineKeyboardButton("?? ????? ??????? ????", callback_data="server_plans")],
+                [InlineKeyboardButton("?? ??????", callback_data="back_admin_panel")]
             ])
         )
-        return
-    if data == "admin_panel_sales":
+    elif data == "admin_panel_sales":
         await query.edit_message_text(
-            "🧾 <b>مدیریت طرح‌های فروخته‌شده</b>",
+            "?? <b>?????? ??????? ??????????</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👥 مدیریت کاربران", callback_data="admin_panel_users")],
-                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_admin_panel")]
+                [InlineKeyboardButton("?? ?????? ???????", callback_data="admin_panel_users")],
+                [InlineKeyboardButton("?? ??????", callback_data="back_admin_panel")]
             ])
         )
-        return
-
 
 async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -6761,12 +6732,12 @@ def main():
     app.add_error_handler(error_handler)
     app.job_queue.run_repeating(check_expiry_dates, interval=3600, first=60)
     app.job_queue.run_repeating(check_traffic_usage, interval=3600, first=10)
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(CommandHandler("wallet", show_wallet_panel))
-    app.add_handler(
-        CallbackQueryHandler(handle_promo_callbacks, pattern=r"^promo_")
-    )
+
+    app.add_handler(CallbackQueryHandler(handle_promo_callbacks, pattern=r"^promo_"))
     app.add_handler(CallbackQueryHandler(handle_sync_callbacks, pattern=r"^sync_"))
     app.add_handler(CallbackQueryHandler(handle_user_message_callback, pattern=r"^user_message_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_wallet_confirm_cb, pattern="^wallet_(confirm|cancel)$"))
@@ -6775,78 +6746,61 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_reward_callback, pattern=r"^reward_(approve|reject)_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_wallet_admin_cb, pattern=r"^wallet_(appr|rej)_\d+$"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_wallet_receipt_photo))
-    app.add_handler(CallbackQueryHandler(handle_my_plans_nav, pattern="^my_plans_"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_selection))
-    app.add_handler(
-        MessageHandler(filters.TEXT & filters.Regex("^(💰 خرید سرور|🎁 دریافت سرور تست)$"), handle_buy_server))
-    app.add_handler(CallbackQueryHandler(handle_go_to_wallet_cb, pattern="^go_to_wallet$"))
-    app.add_handler(CallbackQueryHandler(handle_panel_shortcuts, pattern=r"^(buy_panel_open|buy_panel_test|admin_panel_users|admin_panel_servers|admin_panel_support|admin_panel_sales)$"))
+    app.add_handler(CallbackQueryHandler(handle_panel_shortcuts, pattern=r"^(buy_panel_open|buy_panel_test|admin_panel|wallet_panel|support_panel|profile_panel|guid|admin_panel_users|admin_panel_servers|admin_panel_support|admin_panel_sales)$"))
+    app.add_handler(CallbackQueryHandler(handle_return_main_menu_callback, pattern="^return_main_menu$"))
     app.add_handler(CallbackQueryHandler(handle_profile_panel, pattern=r"^(profile_user_info|profile_custom_server|profile_referral|profile_reward)$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_user_view_category_callback, pattern=r"^user_view_category_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_user_view_category_callback, pattern=r"^user_view_category_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_back_navigation, pattern="^user_back$"))
-    app.add_handler(CallbackQueryHandler(handle_user_plans_callback, pattern=r"user_plans_\d+(_\d+)?"))
+    app.add_handler(CallbackQueryHandler(handle_user_plans_callback, pattern=r"^user_plans_\d+(_\d+)?$"))
     app.add_handler(CallbackQueryHandler(handle_users_pagination_callback, pattern=r"^users_page_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_reply_to_user_callback, pattern=r"^reply_to_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_show_all_support_messages_callback, pattern=r"^all_message_\d+$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_unanswered_support_messages_callback, pattern=r"^unanswered_message_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_unanswered_support_messages_callback, pattern=r"^unanswered_message_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_user_cart_vis_callback, pattern=r"^user_cart_vis_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_user_transactions_callback, pattern=r"^user_transactions_\d+(_\d+)?$"))
     app.add_handler(CallbackQueryHandler(handle_user_change_balance_callback, pattern=r"^user_change_balance_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_user_delete_callback, pattern=r"^user_delete_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_confirm_user_delete_callback, pattern=r"^confirm_user_delete_\d+$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_user_discount_percentage_callback, pattern=r"^user_discount_percentage_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_user_discount_percentage_callback, pattern=r"^user_discount_percentage_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_selected_user_callback, pattern=r"^selected_user_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_user_in_active_callback, pattern=r"^user_in_active_\d+$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_confirm_user_in_active_callback, pattern=r"^confirm_user_(in_)?active_\d+$"))
-    app.add_handler(CallbackQueryHandler(handle_return_buy_server, pattern="return_buy_server"))
+    app.add_handler(CallbackQueryHandler(handle_confirm_user_in_active_callback, pattern=r"^confirm_user_(in_)?active_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_return_buy_server, pattern="^return_buy_server$"))
     app.add_handler(CallbackQueryHandler(handle_back_to_user_manage_menu, pattern="^back_to_user_manage_menu$"))
-    app.add_handler(CallbackQueryHandler(handle_cancel_renewal_callback, pattern="cancel_renewal"))
     app.add_handler(CallbackQueryHandler(handle_search_user_by_callback, pattern=r"^search_user_(username|userid)$"))
-    app.add_handler(CallbackQueryHandler(handle_search_user_callback, pattern="search_user"))
-    app.add_handler(CallbackQueryHandler(handle_back_admin_panel_callback, pattern="back_admin_panel"))
-    app.add_handler(CallbackQueryHandler(show_detail_purchased_plan_callback, pattern="^show_detail_purchased_plan_"))
-    app.add_handler(CallbackQueryHandler(handle_qr_code_purchased_plan_callback, pattern="qr_code_purchased_plan"))
-    app.add_handler(CallbackQueryHandler(handle_return_user_purchased_callback, pattern="return_user_purchased"))
-    app.add_handler(CallbackQueryHandler(handle_return_my_profile_callback, pattern="return_my_profile"))
-    app.add_handler(CallbackQueryHandler(handle_cancel_delete_purchased_plan, pattern="cancel_delete_purchased_plan"))
-    app.add_handler(
-        CallbackQueryHandler(handle_user_confirm_delete_purchased_plan, pattern="confirm_delete_purchased_plan"))
-    app.add_handler(CallbackQueryHandler(handle_return_setup_server_menu_callback, pattern="return_setup_server_menu"))
+    app.add_handler(CallbackQueryHandler(handle_search_user_callback, pattern="^search_user$"))
+    app.add_handler(CallbackQueryHandler(handle_back_admin_panel_callback, pattern="^back_admin_panel$"))
     app.add_handler(CallbackQueryHandler(handle_edit_server_callback, pattern=r"^edit_server_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_confirm_edit_server_callback, pattern=r"^confirm_edit_\w+_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_edit_server_field_callback, pattern=r"^callback_edit_server_\w+_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_server_callback, pattern=r"^(server|delete_server)_\d+$|^return_servers$"))
+    app.add_handler(CallbackQueryHandler(handle_test_config_callback, pattern="^(edit_test_config|delete_test_config)$"))
+    app.add_handler(CallbackQueryHandler(handle_server_plans_callback))
+    app.add_handler(CallbackQueryHandler(handle_go_to_wallet_cb, pattern="^go_to_wallet$"))
+    app.add_handler(CallbackQueryHandler(check_join, pattern="^check_join$"))
+    app.add_handler(CallbackQueryHandler(handle_my_plans_nav, pattern="^my_plans_"))
+    app.add_handler(CallbackQueryHandler(show_detail_purchased_plan_callback, pattern=r"^(show_detail_purchased_plan_|user_purchased_plan_)\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_qr_code_purchased_plan_callback, pattern=r"^qr_code_purchased_plan$"))
+    app.add_handler(CallbackQueryHandler(handle_return_user_purchased_callback, pattern=r"^return_user_purchased$"))
+    app.add_handler(CallbackQueryHandler(handle_return_my_profile_callback, pattern=r"^return_my_profile$"))
+    app.add_handler(CallbackQueryHandler(handle_cancel_delete_purchased_plan, pattern=r"^cancel_delete_purchased_plan$"))
+    app.add_handler(CallbackQueryHandler(handle_user_confirm_delete_purchased_plan, pattern=r"^confirm_delete_purchased_plan$"))
+    app.add_handler(CallbackQueryHandler(handle_return_setup_server_menu_callback, pattern=r"^return_setup_server_menu$"))
     app.add_handler(CallbackQueryHandler(handle_confirm_renewal_plan_callback, pattern=r"^confirm_renewal_\d+$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_user_delete_purchased_plan_callback, pattern=r"^delete_purchased_plan_\d+$"))
-    app.add_handler(CallbackQueryHandler(show_detail_purchased_plan_callback, pattern=r"^user_purchased_plan_\d+$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_user_renewal_purchased_callback, pattern=r"^renewal_purchased_plan_\d+$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_dis_able_purchased_plan_callback, pattern=r"^dis_able_purchased_plan_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_user_delete_purchased_plan_callback, pattern=r"^delete_purchased_plan_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_user_renewal_purchased_callback, pattern=r"^renewal_purchased_plan_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_dis_able_purchased_plan_callback, pattern=r"^dis_able_purchased_plan_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_change_link_callback, pattern=r"^change_link_purchased_plan_\d+$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_change_name_purchased_plan_callback, pattern=r"^change_name_purchased_plan_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_change_name_purchased_plan_callback, pattern=r"^change_name_purchased_plan_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_user_buy_plan_callback, pattern=r"^user_buy_plan_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_confirm_buy_plan_callback, pattern=r"^confirm_buy_plan_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_view_plans_callback, pattern=r"^(admin_view_plan_|delete_plan_)\d+$"))
     app.add_handler(CallbackQueryHandler(handle_edit_plan_server_callback, pattern=r"^edit_plan_\d+$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_edit_category_callback, pattern=r"^(admin_edit|admin_delete)_category_\d+$"))
-    app.add_handler(
-        CallbackQueryHandler(handle_edit_field_plan_callback,
-                             pattern=r"^edit_plan_(price|inbound_id|traffic_gb|duration_days)$"))
-    app.add_handler(CallbackQueryHandler(handle_confirm_edit_plan_callback,
-                                         pattern=r"^confirm_edit_plan_(price|inbound_id|traffic_gb|duration_days)_[0-9]+$"))
-    app.add_handler(CallbackQueryHandler(handle_edit_server_field_callback, pattern=r"^callback_edit_server_\w+_\d+$"))
-    app.add_handler(CallbackQueryHandler(handle_confirm_edit_server_callback, pattern=r"^confirm_edit_\w+_\d+$"))
-    app.add_handler(CallbackQueryHandler(check_join, pattern="check_join"))
-    app.add_handler(CallbackQueryHandler(handle_server_callback,
-                                         pattern=r"^(server|delete_server)_\d+$|^return_servers$"))
-    app.add_handler(CallbackQueryHandler(handle_test_config_callback,
-                                         pattern="^(edit_test_config|delete_test_config)$"))
-    app.add_handler(CallbackQueryHandler(handle_server_plans_callback))
+    app.add_handler(CallbackQueryHandler(handle_edit_category_callback, pattern=r"^(admin_edit|admin_delete)_category_\d+$"))
+    app.add_handler(CallbackQueryHandler(handle_edit_field_plan_callback, pattern=r"^edit_plan_(price|inbound_id|traffic_gb|duration_days)$"))
+    app.add_handler(CallbackQueryHandler(handle_confirm_edit_plan_callback, pattern=r"^confirm_edit_plan_(price|inbound_id|traffic_gb|duration_days)_[0-9]+$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_menu_selection))
+
     app.run_polling()
 
 
