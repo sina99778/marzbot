@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -84,3 +85,14 @@ class UserRepository(AsyncRepository[User]):
                 raise
 
             return concurrent_user, False
+
+    async def mark_free_trial_received(self, user_id: UUID) -> User | None:
+        user = await self.get(user_id)
+        if user is None:
+            return None
+
+        user.has_received_free_trial = True
+        self.session.add(user)
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user

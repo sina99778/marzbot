@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.middlewares.admin import AdminOnlyMiddleware
 from apps.bot.states.admin import BroadcastStates
+from core.texts import AdminMessages
 from models.broadcast import BroadcastJob
 from models.user import User
 
@@ -20,7 +21,7 @@ router.callback_query.middleware(AdminOnlyMiddleware())
 async def broadcast_start(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.set_state(BroadcastStates.waiting_for_message)
-    await callback.message.answer("Send the broadcast message now. Text and photo messages are supported.")
+    await callback.message.answer(AdminMessages.BROADCAST_START)
 
 
 @router.message(BroadcastStates.waiting_for_message)
@@ -38,12 +39,12 @@ async def broadcast_capture(message: Message, state: FSMContext) -> None:
         payload["media_caption"] = message.caption
         payload["text"] = None
     elif message.text is None:
-        await message.answer("Only text or photo broadcasts are supported right now.")
+        await message.answer(AdminMessages.BROADCAST_UNSUPPORTED)
         return
 
     await state.update_data(broadcast_payload=payload)
     await state.set_state(BroadcastStates.waiting_for_confirmation)
-    await message.answer("Reply with `confirm` to queue the broadcast, or `cancel` to abort.")
+    await message.answer(AdminMessages.BROADCAST_CONFIRM)
 
 
 @router.message(BroadcastStates.waiting_for_confirmation)
@@ -59,10 +60,10 @@ async def broadcast_confirm(
     decision = message.text.strip().lower()
     if decision == "cancel":
         await state.clear()
-        await message.answer("Broadcast cancelled.")
+        await message.answer(AdminMessages.BROADCAST_CANCELLED)
         return
     if decision != "confirm":
-        await message.answer("Reply with `confirm` or `cancel`.")
+        await message.answer(AdminMessages.BROADCAST_CONFIRM_HINT)
         return
 
     state_data = await state.get_data()
@@ -80,4 +81,4 @@ async def broadcast_confirm(
     await session.flush()
 
     await state.clear()
-    await message.answer(f"Broadcast `{broadcast_job.id}` queued successfully.")
+    await message.answer(AdminMessages.BROADCAST_QUEUED.format(job_id=broadcast_job.id))

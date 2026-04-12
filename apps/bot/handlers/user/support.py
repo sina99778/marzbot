@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.handlers.admin.support import SupportTicketActionCallback
 from apps.bot.states.support import UserSupportStates
-from core.config import settings
+from core.texts import Buttons, Messages, SupportTexts
 from models.user import User
 from repositories.ticket import TicketRepository
 from repositories.user import UserRepository
@@ -24,13 +24,13 @@ async def cancel_support_state(message: Message, state: FSMContext) -> None:
     if await state.get_state() is None:
         return
     await state.clear()
-    await message.answer("Cancelled.")
+    await message.answer(Messages.CANCELLED)
 
 
-@router.message(F.text == "🛠 Support")
+@router.message(F.text == Buttons.SUPPORT)
 async def support_start(message: Message, state: FSMContext) -> None:
     await state.set_state(UserSupportStates.waiting_for_issue)
-    await message.answer("Describe your issue and support will get back to you here. Send /cancel to stop.")
+    await message.answer(SupportTexts.START)
 
 
 @router.message(UserSupportStates.waiting_for_issue)
@@ -45,7 +45,7 @@ async def support_submit(
 
     user = await UserRepository(session).get_by_telegram_id(message.from_user.id)
     if user is None:
-        await message.answer("Your account was not found. Please use /start first.")
+        await message.answer(SupportTexts.ACCOUNT_NOT_FOUND)
         return
 
     ticket_repository = TicketRepository(session)
@@ -57,7 +57,7 @@ async def support_submit(
 
     await ticket_repository.add_message(ticket_id=ticket.id, sender_id=user.id, text=message.text.strip())
     await state.clear()
-    await message.answer(f"Your message has been sent to support. Ticket ID: {ticket.id}")
+    await message.answer(SupportTexts.TICKET_CREATED.format(ticket_id=ticket.id))
 
     admin_result = await session.execute(
         select(User).where(User.role.in_(["admin", "owner"]), User.status == "active")
@@ -68,16 +68,15 @@ async def support_submit(
 
     builder = InlineKeyboardBuilder()
     builder.button(
-        text=f"💬 Reply (Ticket #{str(ticket.id)[:8]})",
+        text=SupportTexts.ADMIN_REPLY_BUTTON.format(ticket_short=str(ticket.id)[:8]),
         callback_data=SupportTicketActionCallback(action="reply", ticket_id=ticket.id).pack(),
     )
     builder.adjust(1)
-    alert_text = (
-        "New support ticket\n\n"
-        f"Ticket: {ticket.id}\n"
-        f"User: {user.first_name or '-'}\n"
-        f"Telegram ID: {user.telegram_id}\n"
-        f"Message: {message.text.strip()}"
+    alert_text = SupportTexts.ADMIN_ALERT.format(
+        ticket_id=ticket.id,
+        name=user.first_name or "-",
+        telegram_id=user.telegram_id,
+        message=message.text.strip(),
     )
     for admin in admins:
         await bot.send_message(admin.telegram_id, alert_text, reply_markup=builder.as_markup())

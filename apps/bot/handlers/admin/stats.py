@@ -5,6 +5,7 @@ from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.middlewares.admin import AdminOnlyMiddleware
+from core.texts import AdminMessages
 from repositories.admin import AdminStatsRepository
 
 
@@ -24,11 +25,10 @@ async def admin_stats_dashboard(callback: CallbackQuery, session: AsyncSession) 
     total_active_servers = await stats_repository.get_total_active_servers()
 
     await callback.message.answer(
-        (
-            "Statistics Dashboard\n\n"
-            f"Total Users: {total_users}\n"
-            f"Active Subscriptions: {total_active_subscriptions}\n"
-            f"Total Revenue: {total_revenue} USD\n"
-            f"Active Servers: {total_active_servers}"
+        AdminMessages.STATS_DASHBOARD.format(
+            total_users=total_users,
+            total_active_subscriptions=total_active_subscriptions,
+            total_revenue=total_revenue,
+            total_active_servers=total_active_servers,
         )
     )

@@ -31,6 +31,12 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=False,
         server_default="false",
     )
+    has_received_free_trial: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
     referred_by_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,

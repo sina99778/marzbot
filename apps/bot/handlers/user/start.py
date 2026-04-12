@@ -6,6 +6,7 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.keyboards.user import get_main_menu_keyboard
+from core.texts import Messages
 from repositories.user import UserRepository
 
 
@@ -32,19 +33,12 @@ async def start_command_handler(message: Message, session: AsyncSession) -> None
         language_code=telegram_user.language_code,
     )
 
-    welcome_name = user.first_name or telegram_user.first_name or "there"
+    welcome_name = user.first_name or telegram_user.first_name or "دوست عزیز"
 
     if is_created:
-        welcome_text = (
-            f"Welcome, {welcome_name}.\n\n"
-            "Your account and wallet are ready. From here you can buy configs, "
-            "manage your balance, and access support."
-        )
+        welcome_text = Messages.WELCOME_NEW.format(name=welcome_name)
     else:
-        welcome_text = (
-            f"Welcome back, {welcome_name}.\n\n"
-            "Your dashboard is ready. Use the menu below to continue."
-        )
+        welcome_text = Messages.WELCOME_BACK.format(name=welcome_name)
 
     await message.answer(
         welcome_text,

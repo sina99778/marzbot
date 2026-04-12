@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from apps.bot.middlewares.admin import AdminOnlyMiddleware
 from apps.bot.states.admin import ManageUserStates
+from core.texts import AdminButtons, AdminMessages
 from models.order import Order
 from models.subscription import Subscription
 from models.user import User
@@ -36,7 +37,7 @@ class AdminUserActionCallback(CallbackData, prefix="admin_user"):
 async def admin_users_start(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.set_state(ManageUserStates.waiting_for_telegram_id)
-    await callback.message.answer("Send the user's Telegram ID.")
+    await callback.message.answer(AdminMessages.ASK_USER_TELEGRAM_ID)
 
 
 @router.message(ManageUserStates.waiting_for_telegram_id)
@@ -63,7 +64,7 @@ async def admin_users_lookup(
         .where(User.telegram_id == telegram_id)
     )
     if user is None or user.wallet is None:
-        await message.answer("User not found.")
+        await message.answer(AdminMessages.USER_NOT_FOUND)
         return
 
     total_orders = int(
@@ -85,7 +86,7 @@ async def admin_edit_balance_prompt(
     await callback.answer()
     await state.set_state(ManageUserStates.waiting_for_balance_adjustment)
     await state.update_data(target_user_id=str(callback_data.user_id))
-    await callback.message.answer("Enter a positive amount to add or a negative amount to deduct.")
+    await callback.message.answer(AdminMessages.ENTER_BALANCE_ADJUSTMENT)
 
 
 @router.message(ManageUserStates.waiting_for_balance_adjustment)
@@ -102,24 +103,24 @@ async def admin_edit_balance_submit(
     raw_user_id = state_data.get("target_user_id")
     if raw_user_id is None:
         await state.clear()
-        await message.answer("No target user is selected.")
+        await message.answer(AdminMessages.USER_NOT_FOUND)
         return
 
     try:
         amount = Decimal(message.text.strip())
     except InvalidOperation:
-        await message.answer("Please enter a valid decimal amount.")
+        await message.answer(AdminMessages.INVALID_PRICE)
         return
 
     if amount == Decimal("0"):
-        await message.answer("Amount cannot be zero.")
+        await message.answer(AdminMessages.AMOUNT_NOT_ZERO)
         return
 
     target_user_id = UUID(str(raw_user_id))
     user = await session.scalar(select(User).options(selectinload(User.wallet)).where(User.id == target_user_id))
     if user is None or user.wallet is None:
         await state.clear()
-        await message.answer("User not found.")
+        await message.answer(AdminMessages.USER_NOT_FOUND)
         return
 
     wallet_manager = WalletManager(session)
@@ -163,7 +164,7 @@ async def admin_toggle_ban(
     await callback.answer()
     user = await UserRepository(session).get(callback_data.user_id)
     if user is None:
-        await callback.message.answer("User not found.")
+        await callback.message.answer(AdminMessages.USER_NOT_FOUND)
         return
 
     if user.status == "banned":
@@ -192,27 +193,27 @@ async def admin_toggle_ban(
 
 def _build_user_profile_text(*, user: User, total_orders: int) -> str:
     wallet_balance = user.wallet.balance if user.wallet is not None else Decimal("0")
-    return (
-        f"User: {user.first_name or '-'}\n"
-        f"Telegram ID: {user.telegram_id}\n"
-        f"Status: {user.status}\n"
-        f"Wallet Balance: {wallet_balance} USD\n"
-        f"Total Orders: {total_orders}"
+    return AdminMessages.USER_PROFILE.format(
+        name=user.first_name or "-",
+        telegram_id=user.telegram_id,
+        status=user.status,
+        wallet_balance=wallet_balance,
+        total_orders=total_orders,
     )
 
 
 def _build_user_profile_keyboard(user_id: UUID, status: str):
     builder = InlineKeyboardBuilder()
     builder.button(
-        text="💰 Edit Balance",
+        text=AdminButtons.EDIT_BALANCE,
         callback_data=AdminUserActionCallback(action="edit_balance", user_id=user_id).pack(),
     )
     builder.button(
-        text="🚫 Ban User" if status != "banned" else "✅ Unban User",
+        text=AdminButtons.BAN_USER if status != "banned" else AdminButtons.UNBAN_USER,
         callback_data=AdminUserActionCallback(action="toggle_ban", user_id=user_id).pack(),
     )
     builder.button(
-        text="📋 View User Configs",
+        text=AdminButtons.VIEW_CONFIGS,
         callback_data=AdminUserActionCallback(action="view_configs", user_id=user_id).pack(),
     )
     builder.adjust(1)

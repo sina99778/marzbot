@@ -15,6 +15,7 @@ from apps.bot.keyboards.inline import add_pagination_controls
 from apps.bot.handlers.admin.users import AdminUserActionCallback
 from apps.bot.middlewares.admin import AdminOnlyMiddleware
 from core.config import settings
+from core.texts import AdminButtons, AdminMessages
 from models.subscription import Subscription
 from models.user import User
 from models.xui import XUIClientRecord
@@ -86,15 +87,15 @@ async def _render_user_configs(
         .where(User.id == user_id)
     )
     if user is None:
-        await callback.message.answer("User not found.")
+        await callback.message.answer(AdminMessages.USER_NOT_FOUND)
         return
 
     active_subs = [sub for sub in user.subscriptions if sub.status in {"pending_activation", "active"}]
     if not active_subs:
         try:
-            await callback.message.edit_text("This user has no active or pending configs.")
+            await callback.message.edit_text(AdminMessages.NO_ACTIVE_CONFIGS)
         except TelegramBadRequest:
-            await callback.message.answer("This user has no active or pending configs.")
+            await callback.message.answer(AdminMessages.NO_ACTIVE_CONFIGS)
         return
 
     start = max(page - 1, 0) * SUB_PAGE_SIZE
@@ -113,7 +114,7 @@ async def _render_user_configs(
     builder = InlineKeyboardBuilder()
     for subscription in page_items:
         builder.button(
-            text=f"🗑 Revoke {str(subscription.id)[:8]}",
+            text=f"{AdminButtons.REVOKE_CONFIG} {str(subscription.id)[:8]}",
             callback_data=AdminSubscriptionActionCallback(
                 action="revoke",
                 subscription_id=subscription.id,
@@ -150,7 +151,7 @@ async def revoke_user_config(
         .where(Subscription.id == callback_data.subscription_id)
     )
     if subscription is None:
-        await callback.message.answer("Subscription not found.")
+        await callback.message.answer(AdminMessages.SUBSCRIPTION_NOT_FOUND)
         return
 
     xui_record = subscription.xui_client

@@ -7,6 +7,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.texts import AdminMessages
 from repositories.user import UserRepository
 
 
@@ -48,6 +49,6 @@ def _extract_telegram_id(event: TelegramObject) -> int | None:
 
 async def _deny_access(event: TelegramObject) -> None:
     if isinstance(event, Message):
-        await event.answer("Permission denied.")
+        await event.answer(AdminMessages.PERMISSION_DENIED)
     elif isinstance(event, CallbackQuery):
-        await event.answer("Permission denied.", show_alert=True)
+        await event.answer(AdminMessages.PERMISSION_DENIED, show_alert=True)

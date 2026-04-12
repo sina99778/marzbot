@@ -15,6 +15,7 @@ from apps.bot.keyboards.inline import (
 )
 from apps.bot.states.wallet import TopUpStates
 from core.config import settings
+from core.texts import Buttons, Messages
 from models.payment import Payment
 from repositories.user import UserRepository
 from schemas.internal.nowpayments import NowPaymentsPaymentCreateRequest
@@ -24,21 +25,21 @@ from services.nowpayments.client import NowPaymentsClient, NowPaymentsClientConf
 router = Router(name="user-topup")
 
 
-@router.message(F.text == "👤 My Profile / Wallet")
+@router.message(F.text == Buttons.PROFILE_WALLET)
 async def wallet_profile_handler(message: Message, session: AsyncSession) -> None:
     if message.from_user is None:
         return
 
     user = await UserRepository(session).get_by_telegram_id(message.from_user.id)
     if user is None or user.wallet is None:
-        await message.answer("Your wallet could not be loaded. Please try /start again.")
+        await message.answer(Messages.WALLET_NOT_FOUND)
         return
 
     await message.answer(
-        (
-            f"Profile: {user.first_name or 'User'}\n"
-            f"Balance: {user.wallet.balance} USD\n"
-            f"Credit Limit: {user.wallet.credit_limit} USD"
+        Messages.PROFILE_OVERVIEW.format(
+            name=user.first_name or "کاربر",
+            balance=user.wallet.balance,
+            credit_limit=user.wallet.credit_limit,
         ),
         reply_markup=build_wallet_profile_keyboard(),
     )
@@ -48,7 +49,7 @@ async def wallet_profile_handler(message: Message, session: AsyncSession) -> Non
 async def topup_options_handler(callback: CallbackQuery) -> None:
     await callback.answer()
     await callback.message.answer(
-        "Choose a top-up amount or enter a custom amount.",
+        Messages.TOPUP_CHOOSE_AMOUNT,
         reply_markup=build_wallet_topup_keyboard(),
     )
 
@@ -68,7 +69,7 @@ async def topup_preset_handler(
 async def topup_custom_amount_prompt(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.set_state(TopUpStates.waiting_for_custom_amount)
-    await callback.message.answer("Enter the amount you want to top up in USD, for example `12.50`.")
+    await callback.message.answer(Messages.TOPUP_ENTER_CUSTOM)
 
 
 @router.message(TopUpStates.waiting_for_custom_amount)
@@ -83,11 +84,11 @@ async def topup_custom_amount_handler(
     try:
         amount = Decimal(message.text.strip())
     except InvalidOperation:
-        await message.answer("That amount is invalid. Please enter a number like `10` or `12.50`.")
+        await message.answer(Messages.TOPUP_INVALID_AMOUNT)
         return
 
     if amount <= Decimal("0"):
-        await message.answer("The amount must be greater than zero.")
+        await message.answer(Messages.TOPUP_AMOUNT_GT_ZERO)
         return
 
     await state.clear()
@@ -102,7 +103,7 @@ async def _create_topup_invoice(
 ) -> None:
     user = await UserRepository(session).get_by_telegram_id(telegram_id)
     if user is None:
-        await message.answer("Your account could not be found. Please try /start again.")
+        await message.answer(Messages.ACCOUNT_NOT_FOUND)
         return
 
     local_order_id = str(uuid4())
@@ -124,7 +125,7 @@ async def _create_topup_invoice(
         ) as client:
             invoice = await client.create_payment_invoice(payload)
     except NowPaymentsRequestError:
-        await message.answer("The payment gateway is temporarily unavailable. Please try again shortly.")
+        await message.answer(Messages.PAYMENT_GATEWAY_UNAVAILABLE)
         return
 
     payment = Payment(
@@ -145,10 +146,6 @@ async def _create_topup_invoice(
     await session.flush()
 
     await message.answer(
-        (
-            f"Top-up invoice created for {amount} USD.\n\n"
-            "Open the payment page below and complete the crypto payment. "
-            "Your wallet will be credited automatically after NOWPayments confirms it."
-        ),
+        Messages.TOPUP_INVOICE_CREATED.format(amount=amount),
         reply_markup=build_topup_link_keyboard(str(invoice.invoice_url)),
     )

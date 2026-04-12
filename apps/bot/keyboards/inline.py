@@ -8,6 +8,7 @@ from uuid import UUID
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from core.texts import Buttons
 from models.plan import Plan
 
 
@@ -33,7 +34,7 @@ def build_wallet_topup_keyboard() -> InlineKeyboardMarkup:
         )
 
     builder.button(
-        text="Custom Amount",
+        text=Buttons.CUSTOM_AMOUNT,
         callback_data="wallet:topup:custom",
     )
     builder.adjust(3, 1)
@@ -42,14 +43,14 @@ def build_wallet_topup_keyboard() -> InlineKeyboardMarkup:
 
 def build_wallet_profile_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Top-up via Crypto", callback_data="wallet:topup")
+    builder.button(text=Buttons.TOPUP_CRYPTO, callback_data="wallet:topup")
     builder.adjust(1)
     return builder.as_markup()
 
 
 def build_topup_link_keyboard(invoice_url: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Open Payment Page", url=invoice_url)
+    builder.button(text=Buttons.OPEN_PAYMENT, url=invoice_url)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -72,7 +73,7 @@ def add_pagination_controls(
         return
 
     if page > 1:
-        builder.button(text="⬅️ Prev", callback_data=prev_callback_data)
+        builder.button(text=Buttons.PREV, callback_data=prev_callback_data)
     builder.button(text=f"{page}/{total_pages}", callback_data="pagination:noop")
     if page < total_pages:
-        builder.button(text="Next ➡️", callback_data=next_callback_data)
+        builder.button(text=Buttons.NEXT, callback_data=next_callback_data)

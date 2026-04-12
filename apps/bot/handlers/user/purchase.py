@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.keyboards.inline import build_plan_selection_keyboard, build_wallet_topup_keyboard
 from core.config import settings
+from core.texts import Buttons, Messages
 from models.order import Order
 from models.plan import Plan
 from repositories.user import UserRepository
@@ -26,7 +27,7 @@ async def ignore_pagination_noop(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@router.message(F.text == "🛍 Buy Config")
+@router.message(F.text == Buttons.BUY_CONFIG)
 async def show_available_plans(message: Message, session: AsyncSession) -> None:
     result = await session.execute(
         select(Plan)
@@ -35,11 +36,11 @@ async def show_available_plans(message: Message, session: AsyncSession) -> None:
     )
     plans = list(result.scalars().all())
     if not plans:
-        await message.answer("No plans are available right now. Please try again later.")
+        await message.answer(Messages.NO_PLANS_AVAILABLE)
         return
 
     await message.answer(
-        "Choose a plan to purchase:",
+        Messages.CHOOSE_PLAN,
         reply_markup=build_plan_selection_keyboard(plans),
     )
 
@@ -63,14 +64,15 @@ async def purchase_plan_callback(
     user = await UserRepository(session).get_by_telegram_id(callback.from_user.id)
     plan = await session.get(Plan, plan_id)
     if user is None or user.wallet is None or plan is None or not plan.is_active:
-        await callback.message.answer("This plan is not available right now.")
+        await callback.message.answer(Messages.PLAN_NOT_AVAILABLE)
         return
 
     if user.wallet.balance < plan.price:
         await callback.message.answer(
-            (
-                f"Your wallet balance is {user.wallet.balance} USD, but this plan costs {plan.price} {plan.currency}.\n"
-                "Please top up your wallet first."
+            Messages.INSUFFICIENT_BALANCE.format(
+                balance=user.wallet.balance,
+                price=plan.price,
+                currency=plan.currency,
             ),
             reply_markup=build_wallet_topup_keyboard(),
         )
@@ -102,7 +104,7 @@ async def purchase_plan_callback(
         )
     except InsufficientBalanceError:
         order.status = "failed"
-        await callback.message.answer("Your balance is no longer sufficient. Please top up and try again.")
+        await callback.message.answer(Messages.BALANCE_NOT_SUFFICIENT_ANYMORE)
         return
 
     try:
@@ -132,9 +134,7 @@ async def purchase_plan_callback(
             metadata={"plan_id": str(plan.id)},
         )
         order.status = "refunded"
-        await callback.message.answer(
-            "The panel could not create your configuration right now. Your wallet has been refunded automatically."
-        )
+        await callback.message.answer(Messages.PROVISIONING_FAILED_REFUNDED)
         return
 
     order.status = "provisioned"
@@ -143,12 +143,10 @@ async def purchase_plan_callback(
     sub_link = subscription.sub_link or xui_record.sub_link or "Not available yet"
 
     await callback.message.answer(
-        (
-            "Your configuration has been created successfully.\n\n"
-            f"Plan: {plan.name}\n"
-            f"Volume: {plan.volume_bytes} bytes\n"
-            f"Client: {xui_record.email}\n"
-            f"Sub Link: {sub_link}\n\n"
-            "Activation starts on first use."
+        Messages.CONFIG_CREATED.format(
+            plan_name=plan.name,
+            volume_bytes=plan.volume_bytes,
+            client_email=xui_record.email,
+            sub_link=sub_link,
         )
     )

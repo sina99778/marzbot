@@ -17,6 +17,7 @@ from apps.bot.keyboards.inline import add_pagination_controls
 from apps.bot.middlewares.admin import AdminOnlyMiddleware
 from apps.bot.states.admin import AddServerStates
 from core.security import encrypt_secret
+from core.texts import AdminButtons, AdminMessages, Common
 from models.user import User
 from models.xui import XUIClientRecord, XUIInboundRecord, XUIServerCredential, XUIServerRecord
 from repositories.audit import AuditLogRepository
@@ -43,23 +44,23 @@ class ServerListPageCallback(CallbackData, prefix="server_list"):
 @router.message(Command("admin"))
 async def admin_main_menu(message: Message) -> None:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🖥 Manage Servers", callback_data="admin:servers")
-    builder.button(text="📦 Manage Plans", callback_data="admin:plans")
-    builder.button(text="👥 Manage Users", callback_data="admin:users")
-    builder.button(text="📢 Broadcast Message", callback_data="admin:broadcast")
-    builder.button(text="📊 Statistics", callback_data="admin:stats")
+    builder.button(text=AdminButtons.MANAGE_SERVERS, callback_data="admin:servers")
+    builder.button(text=AdminButtons.MANAGE_PLANS, callback_data="admin:plans")
+    builder.button(text=AdminButtons.MANAGE_USERS, callback_data="admin:users")
+    builder.button(text=AdminButtons.BROADCAST, callback_data="admin:broadcast")
+    builder.button(text=AdminButtons.STATISTICS, callback_data="admin:stats")
     builder.adjust(1)
-    await message.answer("Admin panel:", reply_markup=builder.as_markup())
+    await message.answer(AdminMessages.PANEL_TITLE, reply_markup=builder.as_markup())
 
 
 @router.callback_query(F.data == "admin:servers")
 async def admin_servers_menu(callback: CallbackQuery) -> None:
     await callback.answer()
     builder = InlineKeyboardBuilder()
-    builder.button(text="Add Server", callback_data="admin:servers:add")
-    builder.button(text="List Servers", callback_data=ServerListPageCallback(page=1).pack())
+    builder.button(text=AdminButtons.ADD_SERVER, callback_data="admin:servers:add")
+    builder.button(text=AdminButtons.LIST_SERVERS, callback_data=ServerListPageCallback(page=1).pack())
     builder.adjust(1)
-    await callback.message.answer("Server management:", reply_markup=builder.as_markup())
+    await callback.message.answer(AdminMessages.SERVER_MANAGEMENT, reply_markup=builder.as_markup())
 
 
 @router.callback_query(ServerListPageCallback.filter())
@@ -80,7 +81,7 @@ async def list_servers(
     servers = list(result.scalars().all())
 
     if not servers:
-        text = "No servers are configured yet."
+        text = AdminMessages.NO_SERVERS
         markup = None
     else:
         text = "\n\n".join(
@@ -88,8 +89,8 @@ async def list_servers(
                 (
                     f"Server: {server.name}\n"
                     f"Base URL: {server.base_url}\n"
-                    f"Status: {'active' if server.is_active else 'inactive'}\n"
-                    f"Health: {server.health_status}"
+                f"وضعیت: {Common.ACTIVE if server.is_active else Common.INACTIVE}\n"
+                f"Health: {server.health_status}"
                 )
                 for server in servers
             ]
@@ -103,7 +104,7 @@ async def list_servers(
 async def add_server_start(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.set_state(AddServerStates.waiting_for_name)
-    await callback.message.answer("Enter the server name.")
+    await callback.message.answer(AdminMessages.ENTER_SERVER_NAME)
 
 
 @router.message(AddServerStates.waiting_for_name)
@@ -112,7 +113,7 @@ async def add_server_name(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(name=message.text.strip())
     await state.set_state(AddServerStates.waiting_for_base_url)
-    await message.answer("Enter the X-UI base URL, for example `http://1.2.3.4:2053`.")
+    await message.answer(AdminMessages.ENTER_SERVER_BASE_URL)
 
 
 @router.message(AddServerStates.waiting_for_base_url)
@@ -121,7 +122,7 @@ async def add_server_base_url(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(base_url=message.text.strip())
     await state.set_state(AddServerStates.waiting_for_username)
-    await message.answer("Enter the X-UI panel username.")
+    await message.answer(AdminMessages.ENTER_SERVER_USERNAME)
 
 
 @router.message(AddServerStates.waiting_for_username)
@@ -130,7 +131,7 @@ async def add_server_username(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(username=message.text.strip())
     await state.set_state(AddServerStates.waiting_for_password)
-    await message.answer("Enter the X-UI panel password.")
+    await message.answer(AdminMessages.ENTER_SERVER_PASSWORD)
 
 
 @router.message(AddServerStates.waiting_for_password)
@@ -158,7 +159,7 @@ async def add_server_password(
         ) as xui_client:
             await xui_client.login()
     except (XUIAuthenticationError, XUIRequestError):
-        await message.answer("Connection test failed. Please verify the URL and credentials and try again.")
+        await message.answer(AdminMessages.SERVER_CONNECTION_FAILED)
         await state.clear()
         return
 
@@ -190,7 +191,7 @@ async def add_server_password(
     )
 
     await state.clear()
-    await message.answer(f"Server `{server.name}` was added successfully.")
+    await message.answer(AdminMessages.SERVER_CREATED.format(name=server.name))
 
 
 @router.callback_query(ServerActionCallback.filter(F.action == "toggle"))
@@ -203,7 +204,7 @@ async def toggle_server(
     await callback.answer()
     server = await session.get(XUIServerRecord, callback_data.server_id)
     if server is None:
-        await callback.message.answer("Server not found.")
+        await callback.message.answer(AdminMessages.SERVER_NOT_FOUND)
         return
 
     previous_state = server.is_active
@@ -230,7 +231,7 @@ async def delete_server(
     await callback.answer()
     server = await session.get(XUIServerRecord, callback_data.server_id)
     if server is None:
-        await callback.message.answer("Server not found.")
+        await callback.message.answer(AdminMessages.SERVER_NOT_FOUND)
         return
 
     active_client_count = int(
