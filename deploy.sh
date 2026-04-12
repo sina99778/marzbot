@@ -17,6 +17,6 @@ if command -v git >/dev/null 2>&1 && [ -d .git ]; then
   git pull --ff-only
 fi
 
-"${COMPOSE_CMD[@]}" -f docker-compose.prod.yml up -d postgres redis --build
+"${COMPOSE_CMD[@]}" -f docker-compose.prod.yml up -d --build postgres redis
 "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -m alembic upgrade head
 "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml up -d --build api bot worker
