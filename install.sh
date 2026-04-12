@@ -4,6 +4,8 @@ set -Eeuo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${PROJECT_DIR}/.env"
 COMPOSE_FILE="${PROJECT_DIR}/docker-compose.prod.yml"
+SETUP_SCRIPT="${PROJECT_DIR}/setup.sh"
+DEPLOY_SCRIPT="${PROJECT_DIR}/deploy.sh"
 NGINX_SITE_PATH="/etc/nginx/sites-available/telegramsellbot.conf"
 NGINX_SITE_LINK="/etc/nginx/sites-enabled/telegramsellbot.conf"
 
@@ -65,6 +67,16 @@ require_commands() {
   done
   if [[ "${missing}" -ne 0 ]]; then
     exit 1
+  fi
+}
+
+compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    echo "docker-compose"
+  else
+    return 1
   fi
 }
 
@@ -298,9 +310,9 @@ EOF
   pause
 }
 
-deploy_bot() {
+full_deploy() {
   print_header
-  info "Deploying containers with ${COMPOSE_FILE}"
+  info "Running full deploy / rebuild..."
 
   if [[ ! -f "${ENV_FILE}" ]]; then
     error ".env file not found. Run the configuration builder first."
@@ -308,13 +320,96 @@ deploy_bot() {
     return
   fi
 
-  if [[ ! -x "${PROJECT_DIR}/deploy.sh" ]]; then
-    chmod +x "${PROJECT_DIR}/deploy.sh"
+  chmod +x "${DEPLOY_SCRIPT}"
+  (cd "${PROJECT_DIR}" && "${DEPLOY_SCRIPT}" full)
+  success "Full deployment completed."
+  pause
+}
+
+quick_reload() {
+  print_header
+  info "Quick reloading app services..."
+
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    error ".env file not found. Run the configuration builder first."
+    pause
+    return
   fi
 
-  (cd "${PROJECT_DIR}" && ./deploy.sh)
-  success "Deployment completed."
+  chmod +x "${DEPLOY_SCRIPT}"
+  (cd "${PROJECT_DIR}" && "${DEPLOY_SCRIPT}" reload)
+  success "Quick reload completed."
   pause
+}
+
+show_important_logs() {
+  print_header
+  local compose
+  compose="$(compose_cmd)" || {
+    error "Docker Compose is not installed."
+    pause
+    return
+  }
+
+  echo "1) Bot logs"
+  echo "2) API logs"
+  echo "3) Worker logs"
+  echo "4) Postgres logs"
+  echo "5) Redis logs"
+  echo "6) All important logs"
+  echo "0) Back"
+  echo
+
+  read -r -p "Choose logs to show: " log_choice
+  case "${log_choice}" in
+    1) eval "${compose} -f \"${COMPOSE_FILE}\" logs --tail=120 bot" ;;
+    2) eval "${compose} -f \"${COMPOSE_FILE}\" logs --tail=120 api" ;;
+    3) eval "${compose} -f \"${COMPOSE_FILE}\" logs --tail=120 worker" ;;
+    4) eval "${compose} -f \"${COMPOSE_FILE}\" logs --tail=120 postgres" ;;
+    5) eval "${compose} -f \"${COMPOSE_FILE}\" logs --tail=120 redis" ;;
+    6) eval "${compose} -f \"${COMPOSE_FILE}\" logs --tail=80 bot api worker postgres redis" ;;
+    0) return ;;
+    *) warn "Invalid option." ;;
+  esac
+  echo
+  pause
+}
+
+smart_update() {
+  print_header
+  info "Updating project files from GitHub without touching .env ..."
+  chmod +x "${SETUP_SCRIPT}"
+  (cd /root && "${SETUP_SCRIPT}" sync-only)
+  success "Project files updated."
+  pause
+}
+
+full_uninstall() {
+  print_header
+  warn "This will stop the stack, remove containers, remove volumes, remove the project directory, and remove the Nginx site config."
+  warn "Let's Encrypt certificate files are NOT deleted automatically."
+  echo
+  read -r -p "Type DELETE to continue: " confirm
+  if [[ "${confirm}" != "DELETE" ]]; then
+    warn "Uninstall cancelled."
+    pause
+    return
+  fi
+
+  local compose
+  compose="$(compose_cmd)" || true
+  if [[ -n "${compose}" && -f "${COMPOSE_FILE}" ]]; then
+    eval "${compose} -f \"${COMPOSE_FILE}\" down -v --remove-orphans" || true
+  fi
+
+  docker rm -f telegramsellbot-postgres telegramsellbot-redis telegramsellbot-api telegramsellbot-bot telegramsellbot-worker >/dev/null 2>&1 || true
+  docker volume rm telegramsellbot_postgres_data telegramsellbot_redis_data >/dev/null 2>&1 || true
+  rm -f "${NGINX_SITE_LINK}" "${NGINX_SITE_PATH}"
+  systemctl reload nginx || true
+  rm -rf "${PROJECT_DIR}"
+
+  success "TelegramSellBot was removed from this server."
+  exit 0
 }
 
 main_menu() {
@@ -322,7 +417,11 @@ main_menu() {
     print_header
     echo "1) Setup Configuration (.env builder)"
     echo "2) Install Prerequisites & SSL (Nginx + Certbot)"
-    echo "3) Deploy Bot"
+    echo "3) Full Deploy / Rebuild"
+    echo "4) Quick Reload Services"
+    echo "5) Show Important Logs"
+    echo "6) Smart Update Project Files"
+    echo "7) Full Uninstall"
     echo "0) Exit"
     echo
     read -r -p "Choose an option: " choice
@@ -330,7 +429,11 @@ main_menu() {
     case "${choice}" in
       1) setup_env_builder ;;
       2) install_prerequisites_and_ssl ;;
-      3) deploy_bot ;;
+      3) full_deploy ;;
+      4) quick_reload ;;
+      5) show_important_logs ;;
+      6) smart_update ;;
+      7) full_uninstall ;;
       0)
         success "Goodbye."
         exit 0
