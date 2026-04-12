@@ -79,6 +79,10 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 
 
 async def init_database() -> None:
+    # Import model modules before create_all so SQLAlchemy metadata is populated
+    # even when the bootstrap path imports only core.database.
+    import models  # noqa: F401
+
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 

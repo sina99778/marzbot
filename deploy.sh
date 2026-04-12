@@ -29,7 +29,7 @@ DB_BOOTSTRAP_EXIT_CODE=0
 if [[ -f "alembic.ini" && -d "migrations" ]]; then
   "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -m alembic upgrade head || DB_BOOTSTRAP_EXIT_CODE=$?
 else
-  "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -c "import asyncio; from core.database import init_database; asyncio.run(init_database())" || DB_BOOTSTRAP_EXIT_CODE=$?
+  "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -c "import asyncio; import models; from core.database import init_database; asyncio.run(init_database())" || DB_BOOTSTRAP_EXIT_CODE=$?
 fi
 
 if [[ "${DB_BOOTSTRAP_EXIT_CODE}" -ne 0 ]]; then
