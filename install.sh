@@ -462,6 +462,8 @@ db_status() {
 db_bootstrap_schema() {
   print_header
   info "Bootstrapping database schema..."
+  info "Rebuilding API image to ensure bootstrap uses the latest code..."
+  run_compose build api
   run_compose run --rm api python -c "import asyncio; import models; from core.database import init_database; asyncio.run(init_database())"
   success "Database schema bootstrap completed."
   pause
@@ -493,6 +495,8 @@ db_reset_database() {
   info "Recreating postgres and redis..."
   run_compose up -d postgres redis
   wait_for_postgres
+  info "Rebuilding API image to ensure bootstrap uses the latest code..."
+  run_compose build api
   info "Bootstrapping schema..."
   run_compose run --rm api python -c "import asyncio; import models; from core.database import init_database; asyncio.run(init_database())"
   success "Database reset and bootstrap completed."
