@@ -54,6 +54,11 @@ MENU_INTERRUPT_TEXTS = {
     Buttons.FREE_TRIAL,
 }
 
+DECIMAL_TRANSLATION_TABLE = str.maketrans(
+    "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫٬,",
+    "01234567890123456789..,",
+)
+
 
 @router.message(Command("cancel"), CreatePlanStates.waiting_for_inbound_selection)
 @router.message(Command("cancel"), CreatePlanStates.waiting_for_name)
@@ -265,7 +270,8 @@ async def create_plan_price(
         return
 
     try:
-        price = Decimal(message.text.strip())
+        normalized_price_text = _normalize_decimal_input(message.text)
+        price = Decimal(normalized_price_text)
     except InvalidOperation:
         await message.answer(AdminMessages.INVALID_PRICE)
         return
@@ -317,6 +323,15 @@ async def create_plan_price(
 
     await state.clear()
     await message.answer(AdminMessages.PLAN_CREATED.format(name=plan.name))
+
+
+def _normalize_decimal_input(raw_value: str) -> str:
+    normalized = raw_value.strip().translate(DECIMAL_TRANSLATION_TABLE)
+    normalized = normalized.replace(" ", "")
+    if normalized.count(",") == 1 and "." not in normalized:
+        normalized = normalized.replace(",", ".")
+    normalized = normalized.replace(",", "")
+    return normalized
 
 
 @router.callback_query(PlanActionCallback.filter(F.action == "toggle"))
