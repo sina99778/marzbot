@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from decimal import Decimal, InvalidOperation
 import unicodedata
 from uuid import UUID, uuid4
@@ -12,7 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -30,6 +31,8 @@ from repositories.audit import AuditLogRepository
 router = Router(name="admin-plans")
 router.message.middleware(AdminOnlyMiddleware())
 router.callback_query.middleware(AdminOnlyMiddleware())
+
+logger = logging.getLogger(__name__)
 
 PLAN_PAGE_SIZE = 5
 
@@ -299,36 +302,41 @@ async def create_plan_price(
         is_active=True,
     )
 
-    # Use a savepoint so an IntegrityError doesn't corrupt the outer session
-    # managed by DatabaseSessionMiddleware. This keeps state.clear() safe.
-    duplicate_code = False
+    # Always clear state first so admin is NEVER stuck regardless of what happens next
+    await state.clear()
+
     try:
         async with session.begin_nested():
             session.add(plan)
             await session.flush()
     except IntegrityError:
-        duplicate_code = True
-
-    if duplicate_code:
-        # MUST clear state here too, otherwise admin gets stuck in waiting_for_price
-        await state.clear()
         await message.answer(AdminMessages.PLAN_CODE_EXISTS)
         return
+    except SQLAlchemyError as exc:
+        logger.error("Plan creation DB error: %s", exc, exc_info=True)
+        await message.answer(
+            "❌ خطای دیتابیس در ساخت پلن.\n"
+            "احتمالاً جدول plans نیاز به آپدیت schema دارد.\n"
+            "از منوی installer → Database Tools → Bootstrap Schema را اجرا کنید."
+        )
+        return
 
-    await AuditLogRepository(session).log_action(
-        actor_user_id=admin_user.id,
-        action="create_plan",
-        entity_type="plan",
-        entity_id=plan.id,
-        payload={
-            "code": plan.code,
-            "price": str(plan.price),
-            "inbound_id": str(inbound_id),
-            "protocol": protocol,
-        },
-    )
+    try:
+        await AuditLogRepository(session).log_action(
+            actor_user_id=admin_user.id,
+            action="create_plan",
+            entity_type="plan",
+            entity_id=plan.id,
+            payload={
+                "code": plan.code,
+                "price": str(plan.price),
+                "inbound_id": str(inbound_id),
+                "protocol": protocol,
+            },
+        )
+    except Exception as exc:
+        logger.warning("Audit log failed after plan creation: %s", exc)
 
-    await state.clear()
     await message.answer(AdminMessages.PLAN_CREATED.format(name=plan.name))
 
 
