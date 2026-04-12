@@ -17,7 +17,7 @@ from models.xui import XUIClientRecord, XUIInboundRecord, XUIServerRecord
 from schemas.internal.xui import XUIClient
 from services.wallet.manager import WalletManager
 from services.xui.client import SanaeiXUIClient
-from services.xui.runtime import build_sub_link, create_xui_client_for_server, ensure_inbound_server_loaded
+from services.xui.runtime import build_sub_link, build_vless_uri, create_xui_client_for_server, ensure_inbound_server_loaded
 
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,8 @@ class ZeroUsageRefundError(ProvisioningError):
 class ProvisioningResult:
     subscription: Subscription
     xui_client: XUIClientRecord
+    vless_uri: str
+    sub_link: str
 
 
 class ProvisioningManager:
@@ -97,7 +99,14 @@ class ProvisioningManager:
         if not server.is_active:
             raise ProvisioningError("The selected server is inactive.")
         client_uuid, username, email, sub_id = await self._generate_unique_client_identity()
-        sub_link = build_sub_link(server.base_url, sub_id)
+        sub_link = build_sub_link(server, sub_id)
+        vless_uri = build_vless_uri(
+            client_uuid=client_uuid,
+            server=server,
+            inbound=inbound,
+            sub_id=sub_id,
+            remark=plan.name,
+        )
 
         xui_payload = XUIClient(
             id=client_uuid,
@@ -156,7 +165,12 @@ class ProvisioningManager:
         await self.session.flush()
         await self.session.refresh(subscription)
         await self.session.refresh(xui_record)
-        return ProvisioningResult(subscription=subscription, xui_client=xui_record)
+        return ProvisioningResult(
+            subscription=subscription,
+            xui_client=xui_record,
+            vless_uri=vless_uri,
+            sub_link=sub_link,
+        )
 
     async def process_zero_usage_refund(
         self,

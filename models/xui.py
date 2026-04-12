@@ -23,6 +23,9 @@ class XUIServerRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
     health_status: Mapped[str] = mapped_column(String(24), nullable=False, default="unknown")
+    # Port used by X-UI subscription service (different from admin panel port)
+    # X-UI Sanaei default sub port is 2096 over HTTP
+    subscription_port: Mapped[int] = mapped_column(Integer, nullable=False, default=2096, server_default="2096")
 
     inbounds: Mapped[list[XUIInboundRecord]] = relationship("XUIInboundRecord", back_populates="server")
     credentials: Mapped[XUIServerCredential | None] = relationship(

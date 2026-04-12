@@ -4,18 +4,17 @@ import logging
 from decimal import Decimal
 from uuid import UUID
 
-from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram import Bot, F, Router
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from apps.bot.keyboards.inline import build_plan_selection_keyboard, build_wallet_topup_keyboard
 from core.formatting import format_volume_bytes
+from core.qr import make_qr_bytes
 from core.texts import Buttons, Messages
 from models.order import Order
 from models.plan import Plan
-from models.xui import XUIInboundRecord
 from repositories.user import UserRepository
 from services.provisioning.manager import ProvisioningError, ProvisioningManager
 from services.wallet.manager import InsufficientBalanceError, WalletManager
@@ -35,15 +34,10 @@ async def ignore_pagination_noop(callback: CallbackQuery) -> None:
 async def show_available_plans(message: Message, session: AsyncSession) -> None:
     result = await session.execute(
         select(Plan)
-        .options(selectinload(Plan.inbound).selectinload(XUIInboundRecord.server))
         .where(Plan.is_active.is_(True))
         .order_by(Plan.price.asc(), Plan.duration_days.asc())
     )
-    plans = [
-        plan
-        for plan in result.scalars().all()
-        if plan.inbound is not None and plan.inbound.is_active and plan.inbound.server is not None and plan.inbound.server.is_active
-    ]
+    plans = list(result.scalars().all())
     if not plans:
         await message.answer(Messages.NO_PLANS_AVAILABLE)
         return
@@ -58,6 +52,7 @@ async def show_available_plans(message: Message, session: AsyncSession) -> None:
 async def purchase_plan_callback(
     callback: CallbackQuery,
     session: AsyncSession,
+    bot: Bot,
 ) -> None:
     await callback.answer()
     if callback.from_user is None:
@@ -67,20 +62,13 @@ async def purchase_plan_callback(
     try:
         plan_id = UUID(raw_plan_id)
     except ValueError:
-        await callback.message.answer("The selected plan is invalid.")
+        await callback.message.answer("پلن انتخاب‌شده نامعتبر است.")
         return
 
     user = await UserRepository(session).get_by_telegram_id(callback.from_user.id)
-    plan = await session.scalar(
-        select(Plan)
-        .options(selectinload(Plan.inbound).selectinload(XUIInboundRecord.server))
-        .where(Plan.id == plan_id)
-    )
+    plan = await session.get(Plan, plan_id)
     if user is None or user.wallet is None or plan is None or not plan.is_active:
         await callback.message.answer(Messages.PLAN_NOT_AVAILABLE)
-        return
-    if plan.inbound is None or not plan.inbound.is_active or plan.inbound.server is None or not plan.inbound.server.is_active:
-        await callback.message.answer(Messages.PLAN_CONFIG_UNAVAILABLE)
         return
 
     if user.wallet.balance < plan.price:
@@ -132,7 +120,6 @@ async def purchase_plan_callback(
         )
     except ProvisioningError as exc:
         logger.error("Provisioning failed for order %s: %s", order.id, exc)
-        # Try to refund; if refund also fails, log and notify
         try:
             await wallet_manager.process_transaction(
                 user_id=user.id,
@@ -148,25 +135,50 @@ async def purchase_plan_callback(
             order.status = "refunded"
         except Exception as refund_exc:
             logger.critical(
-                "CRITICAL: Refund also failed for order %s: %s",
-                order.id, refund_exc,
+                "CRITICAL: Refund also failed for order %s: %s", order.id, refund_exc
             )
             order.status = "failed_needs_manual_refund"
-            await callback.message.answer(Messages.PROVISIONING_FAILED_MANUAL_REFUND)
-            return
         await callback.message.answer(Messages.PROVISIONING_FAILED_REFUNDED)
         return
 
     order.status = "provisioned"
-    subscription = provisioned.subscription
-    xui_record = provisioned.xui_client
-    sub_link = subscription.sub_link or xui_record.sub_link or "Not available yet"
 
-    await callback.message.answer(
-        Messages.CONFIG_CREATED.format(
-            plan_name=plan.name,
-            volume_label=format_volume_bytes(plan.volume_bytes),
-            client_email=xui_record.email,
-            sub_link=sub_link,
-        )
+    sub_link = provisioned.sub_link
+    vless_uri = provisioned.vless_uri
+    xui_record = provisioned.xui_client
+    volume_label = format_volume_bytes(plan.volume_bytes)
+
+    # ─── پیام اصلی ───────────────────────────────────────────────────
+    text = (
+        "✅ *کانفیگ شما آماده است\\!*\n\n"
+        f"📦 پلن: *{_escape(plan.name)}*\n"
+        f"💾 حجم: *{_escape(volume_label)}*\n"
+        f"📅 مدت: *{plan.duration_days} روز*\n"
+        f"🕐 فعال‌سازی: *از اولین اتصال*\n\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "🔗 *ساب لینک \\(برای وارد کردن در اپ\\):*\n"
+        f"`{_escape(sub_link)}`\n\n"
+        "📋 *کانفیگ مستقیم:*\n"
+        f"`{_escape(vless_uri)}`\n\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "📱 *QR Code رو اسکن کن یا کانفیگ بالا رو کپی کن*\n"
+        "⚡ ساپورت اپ\\u0647ایی مثل v2rayNG، Hiddify، NekoBox"
     )
+
+    await callback.message.answer(text, parse_mode="MarkdownV2")
+
+    # ─── QR Code ──────────────────────────────────────────────────────
+    qr_bytes = make_qr_bytes(vless_uri)
+    if qr_bytes:
+        await bot.send_photo(
+            chat_id=callback.from_user.id,
+            photo=BufferedInputFile(qr_bytes, filename="config_qr.png"),
+            caption=f"📷 QR کد کانفیگ پلن *{_escape(plan.name)}*",
+            parse_mode="MarkdownV2",
+        )
+
+
+def _escape(text: str) -> str:
+    """Escape special chars for Telegram MarkdownV2."""
+    special = r"\_*[]()~`>#+-=|{}.!"
+    return "".join(f"\\{c}" if c in special else c for c in str(text))
