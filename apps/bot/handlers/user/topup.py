@@ -38,8 +38,8 @@ async def wallet_profile_handler(message: Message, session: AsyncSession) -> Non
     await message.answer(
         Messages.PROFILE_OVERVIEW.format(
             name=user.first_name or "کاربر",
-            balance=user.wallet.balance,
-            credit_limit=user.wallet.credit_limit,
+            balance=f"{user.wallet.balance:.2f}",
+            credit_limit=f"{user.wallet.credit_limit:.2f}",
         ),
         reply_markup=build_wallet_profile_keyboard(),
     )

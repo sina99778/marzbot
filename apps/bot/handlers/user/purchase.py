@@ -74,8 +74,8 @@ async def purchase_plan_callback(
     if user.wallet.balance < plan.price:
         await callback.message.answer(
             Messages.INSUFFICIENT_BALANCE.format(
-                balance=user.wallet.balance,
-                price=plan.price,
+                balance=f"{user.wallet.balance:.2f}",
+                price=f"{plan.price:.2f}",
                 currency=plan.currency,
             ),
             reply_markup=build_wallet_topup_keyboard(),
