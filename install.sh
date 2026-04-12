@@ -82,52 +82,111 @@ print(secrets.token_urlsafe(24))
 PY
 }
 
-prompt_required() {
+read_env_value() {
+  local key="$1"
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    return 0
+  fi
+
+  local line
+  line="$(grep -E "^${key}=" "${ENV_FILE}" | tail -n 1 || true)"
+  if [[ -z "${line}" ]]; then
+    return 0
+  fi
+
+  printf '%s' "${line#*=}"
+}
+
+prompt_with_default() {
   local prompt_text="$1"
   local var_name="$2"
-  local is_secret="${3:-0}"
+  local default_value="${3:-}"
+  local is_secret="${4:-0}"
   local value=""
 
-  while [[ -z "${value}" ]]; do
+  if [[ -n "${default_value}" ]]; then
     if [[ "${is_secret}" == "1" ]]; then
-      read -r -s -p "${prompt_text}: " value
+      read -r -s -p "${prompt_text} [press Enter to keep current]: " value
       echo
+      if [[ -z "${value}" ]]; then
+        value="${default_value}"
+      fi
     else
-      read -r -p "${prompt_text}: " value
+      read -r -p "${prompt_text} [${default_value}]: " value
+      if [[ -z "${value}" ]]; then
+        value="${default_value}"
+      fi
     fi
-    if [[ -z "${value}" ]]; then
-      warn "This value is required."
-    fi
-  done
+  else
+    while [[ -z "${value}" ]]; do
+      if [[ "${is_secret}" == "1" ]]; then
+        read -r -s -p "${prompt_text}: " value
+        echo
+      else
+        read -r -p "${prompt_text}: " value
+      fi
+      if [[ -z "${value}" ]]; then
+        warn "This value is required."
+      fi
+    done
+  fi
 
   printf -v "${var_name}" '%s' "${value}"
 }
 
+extract_domain_from_url() {
+  local url="$1"
+  url="${url#http://}"
+  url="${url#https://}"
+  printf '%s' "${url%%/*}"
+}
+
 setup_env_builder() {
   print_header
-  info "Building a fresh .env file."
+  info "Building or updating .env intelligently."
   require_commands python3
 
+  local current_bot_token current_owner current_xui_base_url current_xui_username current_xui_password
+  local current_nowpayments_api_key current_domain current_app_secret current_postgres_password
+  local current_redis_password current_admin_api_key current_nowpayments_ipn_secret
   local bot_token owner_telegram_id xui_base_url xui_username xui_password nowpayments_api_key domain_name
-  local app_secret_key postgres_password redis_password postgres_user postgres_db database_url redis_url webhook_url support_url
+  local app_secret_key postgres_password redis_password admin_api_key nowpayments_ipn_secret
+  local postgres_user postgres_db database_url redis_url webhook_url support_url web_base_url
 
-  prompt_required "Bot Token" bot_token 1
-  prompt_required "Admin Telegram ID" owner_telegram_id
-  prompt_required "X-UI Base URL (e.g. http://ip:2053)" xui_base_url
-  prompt_required "X-UI Username" xui_username
-  prompt_required "X-UI Password" xui_password 1
-  prompt_required "NOWPayments API Key" nowpayments_api_key 1
-  prompt_required "Domain Name (for webhook/API)" domain_name
+  current_bot_token="$(read_env_value BOT_TOKEN)"
+  current_owner="$(read_env_value OWNER_TELEGRAM_ID)"
+  current_xui_base_url="$(read_env_value XUI_BASE_URL)"
+  current_xui_username="$(read_env_value XUI_USERNAME)"
+  current_xui_password="$(read_env_value XUI_PASSWORD)"
+  current_nowpayments_api_key="$(read_env_value NOWPAYMENTS_API_KEY)"
+  current_domain="$(extract_domain_from_url "$(read_env_value WEB_BASE_URL)")"
+  current_app_secret="$(read_env_value APP_SECRET_KEY)"
+  current_postgres_password="$(read_env_value POSTGRES_PASSWORD)"
+  current_redis_password="$(read_env_value REDIS_PASSWORD)"
+  current_admin_api_key="$(read_env_value ADMIN_API_KEY)"
+  current_nowpayments_ipn_secret="$(read_env_value NOWPAYMENTS_IPN_SECRET)"
 
-  app_secret_key="$(generate_fernet_key)"
-  postgres_password="$(generate_password)"
-  redis_password="$(generate_password)"
+  prompt_with_default "Bot Token" bot_token "${current_bot_token}" 1
+  prompt_with_default "Admin Telegram ID" owner_telegram_id "${current_owner}"
+  prompt_with_default "X-UI Base URL (e.g. http://ip:2053)" xui_base_url "${current_xui_base_url}"
+  prompt_with_default "X-UI Username" xui_username "${current_xui_username}"
+  prompt_with_default "X-UI Password" xui_password "${current_xui_password}" 1
+  prompt_with_default "NOWPayments API Key" nowpayments_api_key "${current_nowpayments_api_key}" 1
+  prompt_with_default "Domain Name (for webhook/API)" domain_name "${current_domain}"
+
+  app_secret_key="${current_app_secret:-$(generate_fernet_key)}"
+  postgres_password="${current_postgres_password:-$(generate_password)}"
+  redis_password="${current_redis_password:-$(generate_password)}"
+  admin_api_key="${current_admin_api_key:-$(generate_password)}"
+  nowpayments_ipn_secret="${current_nowpayments_ipn_secret:-$(generate_password)}"
+
   postgres_user="telegramsellbot"
   postgres_db="telegramsellbot"
   database_url="postgresql+asyncpg://${postgres_user}:${postgres_password}@postgres:5432/${postgres_db}"
   redis_url="redis://default:${redis_password}@redis:6379/0"
   webhook_url="https://${domain_name}/api/webhooks/nowpayments"
   support_url="https://${domain_name}"
+  web_base_url="https://${domain_name}"
 
   cat > "${ENV_FILE}" <<EOF
 APP_ENV=production
@@ -139,6 +198,7 @@ BOT_TOKEN=${bot_token}
 BOT_PARSE_MODE=HTML
 BOT_DROP_PENDING_UPDATES=false
 OWNER_TELEGRAM_ID=${owner_telegram_id}
+ADMIN_API_KEY=${admin_api_key}
 
 POSTGRES_DB=${postgres_db}
 POSTGRES_USER=${postgres_user}
@@ -154,20 +214,21 @@ XUI_PASSWORD=${xui_password}
 
 NOWPAYMENTS_API_KEY=${nowpayments_api_key}
 NOWPAYMENTS_BASE_URL=https://api.nowpayments.io/v1
+NOWPAYMENTS_IPN_SECRET=${nowpayments_ipn_secret}
 NOWPAYMENTS_IPN_CALLBACK_URL=${webhook_url}
 
-WEB_BASE_URL=https://${domain_name}
+WEB_BASE_URL=${web_base_url}
 SUPPORT_URL=${support_url}
 EOF
 
-  success ".env created at ${ENV_FILE}"
-  warn "Review the generated file before deployment, especially any optional variables you want to add."
+  success ".env updated at ${ENV_FILE}"
+  warn "Existing generated secrets were preserved automatically unless you changed them."
   pause
 }
 
 install_prerequisites_and_ssl() {
   print_header
-  info "Installing Docker, Compose plugin, Nginx, and Certbot on Ubuntu."
+  info "Installing or verifying Docker, Compose, Nginx, and Certbot on Ubuntu."
 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
@@ -187,9 +248,12 @@ install_prerequisites_and_ssl() {
   systemctl enable --now docker
   systemctl enable --now nginx
 
-  local email domain_name
-  prompt_required "Email for Let's Encrypt" email
-  prompt_required "Domain pointing to this server" domain_name
+  local current_domain current_email email domain_name
+  current_domain="$(extract_domain_from_url "$(read_env_value WEB_BASE_URL)")"
+  current_email=""
+
+  prompt_with_default "Email for Let's Encrypt" email "${current_email}"
+  prompt_with_default "Domain pointing to this server" domain_name "${current_domain}"
 
   cat > "${NGINX_SITE_PATH}" <<EOF
 server {
@@ -214,7 +278,11 @@ EOF
   nginx -t
   systemctl reload nginx
 
-  certbot --nginx --non-interactive --redirect --agree-tos -m "${email}" -d "${domain_name}"
+  certbot --nginx --non-interactive --redirect --agree-tos -m "${email}" -d "${domain_name}" || {
+    error "Certbot failed. Make sure the domain points to this VPS and port 80/443 are open."
+    pause
+    return
+  }
 
   success "Prerequisites installed and SSL configured for ${domain_name}"
   pause

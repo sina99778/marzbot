@@ -13,10 +13,6 @@ else
   exit 1
 fi
 
-if command -v git >/dev/null 2>&1 && [ -d .git ]; then
-  git pull --ff-only
-fi
-
 "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml up -d --build postgres redis
 
 if [[ -f "alembic.ini" && -d "migrations" ]]; then

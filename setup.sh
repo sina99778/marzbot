@@ -4,12 +4,14 @@ set -Eeuo pipefail
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
-SETUP_VERSION="2026-04-12-1"
+SETUP_VERSION="2026-04-12-2"
 REPO_URL="https://github.com/sina99778/telegramsellbot.git"
+REPO_BRANCH="main"
 INSTALL_DIR="/opt/telegramsellbot"
-ENV_BACKUP="/tmp/telegramsellbot.env.backup"
+TMP_DIR="/tmp/telegramsellbot-sync"
 
 error() {
   echo -e "${RED}[ERROR]${NC} $*" >&2
@@ -23,6 +25,16 @@ success() {
   echo -e "${GREEN}[OK]${NC} $*"
 }
 
+warn() {
+  echo -e "${YELLOW}[WARN]${NC} $*"
+}
+
+cleanup() {
+  rm -rf "${TMP_DIR}"
+}
+
+trap cleanup EXIT
+
 if [[ "${EUID}" -ne 0 ]]; then
   error "This script must be run as root. Please use sudo."
   exit 1
@@ -32,31 +44,40 @@ info "Running setup.sh version ${SETUP_VERSION}"
 
 export DEBIAN_FRONTEND=noninteractive
 
-info "Updating package index and installing git + curl..."
+info "Updating package index and installing git + curl + rsync..."
 apt-get update -qq
-apt-get install -y -qq git curl >/dev/null
+apt-get install -y -qq git curl rsync >/dev/null
 
-if [[ -d "${INSTALL_DIR}/.git" ]]; then
-  info "Existing installation found in ${INSTALL_DIR}. Replacing it with a fresh clone..."
-  if [[ -f "${INSTALL_DIR}/.env" ]]; then
-    cp "${INSTALL_DIR}/.env" "${ENV_BACKUP}"
-    info "Existing .env backed up to ${ENV_BACKUP}"
-  fi
-  rm -rf "${INSTALL_DIR}"
-  git clone --branch main --single-branch "${REPO_URL}" "${INSTALL_DIR}"
-  cd "${INSTALL_DIR}"
-  if [[ -f "${ENV_BACKUP}" ]]; then
-    mv "${ENV_BACKUP}" "${INSTALL_DIR}/.env"
-    info "Previous .env restored."
-  fi
+rm -rf "${TMP_DIR}"
+info "Fetching latest repository snapshot..."
+git clone --depth 1 --branch "${REPO_BRANCH}" --single-branch "${REPO_URL}" "${TMP_DIR}" >/dev/null 2>&1
+
+mkdir -p "${INSTALL_DIR}"
+
+if [[ -d "${INSTALL_DIR}" ]]; then
+  info "Syncing project files into ${INSTALL_DIR} without touching your .env ..."
 else
-  info "Cloning repository into ${INSTALL_DIR}..."
-  rm -rf "${INSTALL_DIR}"
-  git clone --branch main --single-branch "${REPO_URL}" "${INSTALL_DIR}"
-  cd "${INSTALL_DIR}"
+  info "Creating ${INSTALL_DIR} ..."
 fi
 
-chmod +x install.sh deploy.sh
+rsync -a --delete \
+  --exclude ".env" \
+  --exclude ".git" \
+  --exclude "__pycache__" \
+  --exclude "*.pyc" \
+  "${TMP_DIR}/" "${INSTALL_DIR}/"
 
+if [[ ! -d "${INSTALL_DIR}/.git" ]]; then
+  info "Installing git metadata for future updates..."
+  cp -R "${TMP_DIR}/.git" "${INSTALL_DIR}/.git"
+else
+  info "Refreshing local git metadata..."
+  rsync -a --delete "${TMP_DIR}/.git/" "${INSTALL_DIR}/.git/"
+fi
+
+cd "${INSTALL_DIR}"
+chmod +x setup.sh install.sh deploy.sh
+
+success "Project files are up to date."
 success "Launching interactive installer..."
 exec bash install.sh
