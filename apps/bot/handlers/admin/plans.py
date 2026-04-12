@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 import unicodedata
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -279,9 +279,11 @@ async def create_plan_price(
     volume_bytes = int(form_data["volume_gb"]) * 1024 * 1024 * 1024
     protocol = str(form_data["protocol"])
     inbound_id = UUID(str(form_data["inbound_id"]))
+    # Include a UUID fragment so code is always globally unique,
+    # even if the admin creates two plans with identical parameters.
     code = (
         f"{protocol}_{inbound_id.hex[:8]}_{int(form_data['duration_days'])}d_"
-        f"{int(form_data['volume_gb'])}gb_{price.normalize()}"
+        f"{int(form_data['volume_gb'])}gb_{price.normalize()}_{uuid4().hex[:6]}"
     )
 
     plan = Plan(
@@ -308,6 +310,8 @@ async def create_plan_price(
         duplicate_code = True
 
     if duplicate_code:
+        # MUST clear state here too, otherwise admin gets stuck in waiting_for_price
+        await state.clear()
         await message.answer(AdminMessages.PLAN_CODE_EXISTS)
         return
 
