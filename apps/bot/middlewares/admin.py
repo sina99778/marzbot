@@ -7,6 +7,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from core.texts import AdminMessages
 from repositories.user import UserRepository
 
@@ -30,7 +31,12 @@ class AdminOnlyMiddleware(BaseMiddleware):
         if telegram_id is None:
             return None
 
-        user = await UserRepository(session).get_by_telegram_id(telegram_id)
+        user_repository = UserRepository(session)
+        user = await user_repository.ensure_admin_access(telegram_id)
+        if user is None and telegram_id == settings.owner_telegram_id:
+            await _deny_access(event, missing_start=True)
+            return None
+
         if user is None or user.role not in {"admin", "owner"}:
             await _deny_access(event)
             return None
@@ -47,8 +53,13 @@ def _extract_telegram_id(event: TelegramObject) -> int | None:
     return None
 
 
-async def _deny_access(event: TelegramObject) -> None:
+async def _deny_access(event: TelegramObject, *, missing_start: bool = False) -> None:
+    message_text = (
+        "برای فعال شدن دسترسی مدیریت، یک‌بار /start را بزنید و دوباره /admin را امتحان کنید."
+        if missing_start
+        else AdminMessages.PERMISSION_DENIED
+    )
     if isinstance(event, Message):
-        await event.answer(AdminMessages.PERMISSION_DENIED)
+        await event.answer(message_text)
     elif isinstance(event, CallbackQuery):
-        await event.answer(AdminMessages.PERMISSION_DENIED, show_alert=True)
+        await event.answer(message_text, show_alert=True)

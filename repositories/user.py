@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from core.config import settings
 from core.database import utcnow
 from models.user import User, UserProfile
 from models.wallet import Wallet
@@ -48,6 +49,7 @@ class UserRepository(AsyncRepository[User]):
         """
         existing_user = await self.get_by_telegram_id(telegram_id)
         if existing_user is not None:
+            await self._ensure_owner_role(existing_user, telegram_id)
             return existing_user, False
 
         try:
@@ -59,6 +61,7 @@ class UserRepository(AsyncRepository[User]):
                     last_name=last_name,
                     language_code=language_code,
                     last_seen_at=utcnow(),
+                    role="owner" if telegram_id == settings.owner_telegram_id else "user",
                 )
                 self.session.add(user)
                 await self.session.flush()
@@ -101,3 +104,21 @@ class UserRepository(AsyncRepository[User]):
         await self.session.flush()
         await self.session.refresh(user)
         return user
+
+    async def ensure_admin_access(self, telegram_id: int) -> User | None:
+        user = await self.get_by_telegram_id(telegram_id)
+        if user is None:
+            return None
+
+        await self._ensure_owner_role(user, telegram_id)
+        return user
+
+    async def _ensure_owner_role(self, user: User, telegram_id: int) -> None:
+        if telegram_id != settings.owner_telegram_id:
+            return
+        if user.role == "owner":
+            return
+
+        user.role = "owner"
+        self.session.add(user)
+        await self.session.flush()
