@@ -35,11 +35,13 @@ apt-get install -y -qq git curl >/dev/null
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
   info "Existing installation found in ${INSTALL_DIR}. Pulling latest code..."
   cd "${INSTALL_DIR}"
-  git pull origin main
+  git fetch origin
+  git checkout -B main origin/main
+  git pull --ff-only origin main
 else
   info "Cloning repository into ${INSTALL_DIR}..."
   rm -rf "${INSTALL_DIR}"
-  git clone "${REPO_URL}" "${INSTALL_DIR}"
+  git clone --branch main --single-branch "${REPO_URL}" "${INSTALL_DIR}"
   cd "${INSTALL_DIR}"
 fi
 
