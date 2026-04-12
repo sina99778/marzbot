@@ -25,10 +25,27 @@ fi
 
 "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml up -d --build postgres redis
 
+DB_BOOTSTRAP_EXIT_CODE=0
 if [[ -f "alembic.ini" && -d "migrations" ]]; then
-  "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -m alembic upgrade head
+  "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -m alembic upgrade head || DB_BOOTSTRAP_EXIT_CODE=$?
 else
-  "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -c "import asyncio; from core.database import init_database; asyncio.run(init_database())"
+  "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -c "import asyncio; from core.database import init_database; asyncio.run(init_database())" || DB_BOOTSTRAP_EXIT_CODE=$?
+fi
+
+if [[ "${DB_BOOTSTRAP_EXIT_CODE}" -ne 0 ]]; then
+  if docker volume ls --format '{{.Name}}' | grep -q '^telegramsellbot_postgres_data$'; then
+    echo
+    echo "Database bootstrap failed while an existing PostgreSQL volume is present."
+    echo "Most likely cause: POSTGRES_PASSWORD in .env no longer matches the password stored in the existing database volume."
+    echo
+    echo "If this is a fresh install and you do NOT need old data, run:"
+    echo "  docker volume rm telegramsellbot_postgres_data"
+    echo "Then rerun the installer."
+    echo
+    echo "If you need the old data, restore the original POSTGRES_PASSWORD and DATABASE_URL values in .env, then deploy again."
+    echo
+  fi
+  exit "${DB_BOOTSTRAP_EXIT_CODE}"
 fi
 
 "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml up -d --build api bot worker
