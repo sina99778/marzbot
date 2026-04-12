@@ -80,6 +80,15 @@ compose_cmd() {
   fi
 }
 
+run_compose() {
+  local compose
+  compose="$(compose_cmd)" || {
+    error "Docker Compose is not installed."
+    return 1
+  }
+  eval "${compose} -f \"${COMPOSE_FILE}\" $*"
+}
+
 generate_fernet_key() {
   python3 - <<'PY'
 from cryptography.fernet import Fernet
@@ -412,6 +421,83 @@ full_uninstall() {
   exit 0
 }
 
+db_status() {
+  print_header
+  info "Database containers and volumes status"
+  echo
+  docker ps -a --format "table {{.Names}}\t{{.Status}}" | grep telegramsellbot || true
+  echo
+  docker volume ls --format "table {{.Name}}" | grep telegramsellbot || true
+  echo
+  pause
+}
+
+db_bootstrap_schema() {
+  print_header
+  info "Bootstrapping database schema..."
+  run_compose run --rm api python -c "import asyncio; import models; from core.database import init_database; asyncio.run(init_database())"
+  success "Database schema bootstrap completed."
+  pause
+}
+
+db_restart_postgres() {
+  print_header
+  info "Restarting PostgreSQL service..."
+  run_compose restart postgres
+  success "PostgreSQL restarted."
+  pause
+}
+
+db_reset_database() {
+  print_header
+  warn "This will DELETE all PostgreSQL data for TelegramSellBot."
+  warn "Only use this if you do not need existing users, orders, wallets, tickets, or broadcasts."
+  echo
+  read -r -p "Type RESET to continue: " confirm
+  if [[ "${confirm}" != "RESET" ]]; then
+    warn "Database reset cancelled."
+    pause
+    return
+  fi
+
+  run_compose down -v --remove-orphans || true
+  docker volume rm telegramsellbot_postgres_data >/dev/null 2>&1 || true
+  success "Database volume removed."
+  info "Recreating postgres and redis..."
+  run_compose up -d postgres redis
+  info "Bootstrapping schema..."
+  run_compose run --rm api python -c "import asyncio; import models; from core.database import init_database; asyncio.run(init_database())"
+  success "Database reset and bootstrap completed."
+  pause
+}
+
+database_tools_menu() {
+  while true; do
+    print_header
+    echo "Database Tools"
+    echo
+    echo "1) Show DB Status"
+    echo "2) Bootstrap Schema"
+    echo "3) Restart PostgreSQL"
+    echo "4) Reset Database (Delete All Data)"
+    echo "0) Back"
+    echo
+    read -r -p "Choose an option: " db_choice
+
+    case "${db_choice}" in
+      1) db_status ;;
+      2) db_bootstrap_schema ;;
+      3) db_restart_postgres ;;
+      4) db_reset_database ;;
+      0) return ;;
+      *)
+        warn "Invalid option."
+        pause
+        ;;
+    esac
+  done
+}
+
 main_menu() {
   while true; do
     print_header
@@ -421,7 +507,8 @@ main_menu() {
     echo "4) Quick Reload Services"
     echo "5) Show Important Logs"
     echo "6) Smart Update Project Files"
-    echo "7) Full Uninstall"
+    echo "7) Database Tools"
+    echo "8) Full Uninstall"
     echo "0) Exit"
     echo
     read -r -p "Choose an option: " choice
@@ -433,7 +520,8 @@ main_menu() {
       4) quick_reload ;;
       5) show_important_logs ;;
       6) smart_update ;;
-      7) full_uninstall ;;
+      7) database_tools_menu ;;
+      8) full_uninstall ;;
       0)
         success "Goodbye."
         exit 0
