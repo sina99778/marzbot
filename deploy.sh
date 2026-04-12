@@ -18,5 +18,11 @@ if command -v git >/dev/null 2>&1 && [ -d .git ]; then
 fi
 
 "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml up -d --build postgres redis
-"${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -m alembic upgrade head
+
+if [[ -f "alembic.ini" && -d "migrations" ]]; then
+  "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -m alembic upgrade head
+else
+  "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml run --rm api python -c "import asyncio; from core.database import init_database; asyncio.run(init_database())"
+fi
+
 "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml up -d --build api bot worker
