@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from uuid import UUID
 
 from aiogram import F, Router
@@ -18,7 +19,7 @@ from sqlalchemy.orm import selectinload
 from apps.bot.keyboards.inline import add_pagination_controls
 from apps.bot.middlewares.admin import AdminOnlyMiddleware
 from apps.bot.states.admin import AddServerStates
-from core.security import encrypt_secret
+from core.security import decrypt_secret, encrypt_secret
 from core.texts import AdminButtons, AdminMessages, Common
 from models.user import User
 from models.xui import XUIClientRecord, XUIInboundRecord, XUIServerCredential, XUIServerRecord
@@ -79,6 +80,7 @@ async def list_servers(
     total_servers = int(await session.scalar(select(func.count()).select_from(XUIServerRecord)) or 0)
     result = await session.execute(
         select(XUIServerRecord)
+        .options(selectinload(XUIServerRecord.inbounds))
         .order_by(XUIServerRecord.created_at.asc())
         .offset((page - 1) * SERVER_PAGE_SIZE)
         .limit(SERVER_PAGE_SIZE)
@@ -86,22 +88,20 @@ async def list_servers(
     servers = list(result.scalars().all())
 
     if not servers:
-        text = AdminMessages.NO_SERVERS
-        markup = None
-    else:
-        text = "\n\n".join(
-            [
-                (
-                    f"Server: {server.name}\n"
-                    f"Base URL: {server.base_url}\n"
-                f"وضعیت: {Common.ACTIVE if server.is_active else Common.INACTIVE}\n"
-                f"Health: {server.health_status}"
-                )
-                for server in servers
-            ]
-        )
-        markup = _build_server_list_keyboard(servers, page=page, total_items=total_servers)
+        await _edit_or_send(callback, text=AdminMessages.NO_SERVERS, reply_markup=None)
+        return
 
+    text = "\n\n".join(
+        (
+            f"سرور: {server.name}\n"
+            f"آدرس: {server.base_url}\n"
+            f"وضعیت: {Common.ACTIVE if server.is_active else Common.INACTIVE}\n"
+            f"سلامت: {server.health_status}\n"
+            f"اینباند فعال: {sum(1 for inbound in server.inbounds if inbound.is_active)}"
+        )
+        for server in servers
+    )
+    markup = _build_server_list_keyboard(servers, page=page, total_items=total_servers)
     await _edit_or_send(callback, text=text, reply_markup=markup)
 
 
@@ -154,17 +154,11 @@ async def add_server_password(
     base_url = str(form_data["base_url"]).rstrip("/")
 
     try:
-        async with SanaeiXUIClient(
-            XUIClientConfig(
-                base_url=base_url,
-                username=str(form_data["username"]),
-                password=SecretStr(password),
-                timeout_seconds=15.0,
-            )
-        ) as xui_client:
-            await xui_client.login()
-            # Fetch inbounds from the panel right after successful login
-            remote_inbounds = await xui_client.get_inbounds()
+        remote_inbounds = await _fetch_remote_inbounds(
+            base_url=base_url,
+            username=str(form_data["username"]),
+            password=password,
+        )
     except (XUIAuthenticationError, XUIRequestError):
         await message.answer(AdminMessages.SERVER_CONNECTION_FAILED)
         await state.clear()
@@ -187,33 +181,13 @@ async def add_server_password(
         session_cookie_encrypted=None,
     )
     session.add(credential)
-    await session.flush()
 
-    # Auto-sync inbounds from the panel into the database
-    synced_count = 0
-    for remote_inbound in remote_inbounds:
-        # Check if this inbound already exists for this server
-        existing = await session.scalar(
-            select(XUIInboundRecord).where(
-                XUIInboundRecord.server_id == server.id,
-                XUIInboundRecord.xui_inbound_remote_id == remote_inbound.id,
-            )
-        )
-        if existing is not None:
-            continue
-
-        inbound_record = XUIInboundRecord(
-            server_id=server.id,
-            xui_inbound_remote_id=remote_inbound.id,
-            remark=remote_inbound.remark,
-            protocol=remote_inbound.protocol,
-            port=remote_inbound.port,
-            tag=None,
-            is_active=True,
-        )
-        session.add(inbound_record)
-        synced_count += 1
-
+    created_inbounds, synced_count, _ = _sync_remote_inbounds(
+        server_id=server.id,
+        existing_inbounds=[],
+        remote_inbounds=remote_inbounds,
+    )
+    session.add_all(created_inbounds)
     await session.flush()
 
     await AuditLogRepository(session).log_action(
@@ -221,19 +195,17 @@ async def add_server_password(
         action="create_server",
         entity_type="server",
         entity_id=server.id,
-        payload={"name": server.name, "base_url": server.base_url, "inbounds_synced": synced_count},
+        payload={
+            "name": server.name,
+            "base_url": server.base_url,
+            "inbounds_synced": synced_count,
+        },
     )
 
     await state.clear()
-
-    inbound_summary = ""
-    if synced_count > 0:
-        inbound_summary = f"\n\n✅ {synced_count} اینباند از پنل دریافت و ذخیره شد."
-    else:
-        inbound_summary = "\n\n⚠️ هیچ اینباندی در پنل پیدا نشد."
-
     await message.answer(
-        AdminMessages.SERVER_CREATED.format(name=server.name) + inbound_summary
+        AdminMessages.SERVER_CREATED.format(name=server.name)
+        + f"\n\n{synced_count} اینباند از پنل دریافت و ثبت شد."
     )
 
 
@@ -244,64 +216,35 @@ async def sync_server_inbounds(
     session: AsyncSession,
     admin_user: User,
 ) -> None:
-    """Re-sync inbounds from an existing server."""
     await callback.answer()
     server = await session.scalar(
         select(XUIServerRecord)
-        .options(selectinload(XUIServerRecord.credentials))
+        .options(selectinload(XUIServerRecord.credentials), selectinload(XUIServerRecord.inbounds))
         .where(XUIServerRecord.id == callback_data.server_id)
     )
     if server is None:
         await callback.message.answer(AdminMessages.SERVER_NOT_FOUND)
         return
-
     if server.credentials is None:
         await callback.message.answer("اطلاعات ورود سرور موجود نیست.")
         return
 
-    from core.security import decrypt_secret
     try:
-        async with SanaeiXUIClient(
-            XUIClientConfig(
-                base_url=server.base_url,
-                username=server.credentials.username,
-                password=SecretStr(decrypt_secret(server.credentials.password_encrypted)),
-                timeout_seconds=15.0,
-            )
-        ) as xui_client:
-            await xui_client.login()
-            remote_inbounds = await xui_client.get_inbounds()
+        remote_inbounds = await _fetch_remote_inbounds(
+            base_url=server.base_url,
+            username=server.credentials.username,
+            password=decrypt_secret(server.credentials.password_encrypted),
+        )
     except (XUIAuthenticationError, XUIRequestError) as exc:
         await callback.message.answer(f"خطا در اتصال به پنل: {exc}")
         return
 
-    synced_count = 0
-    for remote_inbound in remote_inbounds:
-        existing = await session.scalar(
-            select(XUIInboundRecord).where(
-                XUIInboundRecord.server_id == server.id,
-                XUIInboundRecord.xui_inbound_remote_id == remote_inbound.id,
-            )
-        )
-        if existing is not None:
-            # Update existing inbound info
-            existing.remark = remote_inbound.remark
-            existing.protocol = remote_inbound.protocol
-            existing.port = remote_inbound.port
-            continue
-
-        inbound_record = XUIInboundRecord(
-            server_id=server.id,
-            xui_inbound_remote_id=remote_inbound.id,
-            remark=remote_inbound.remark,
-            protocol=remote_inbound.protocol,
-            port=remote_inbound.port,
-            tag=None,
-            is_active=True,
-        )
-        session.add(inbound_record)
-        synced_count += 1
-
+    created_inbounds, synced_count, disabled_count = _sync_remote_inbounds(
+        server_id=server.id,
+        existing_inbounds=server.inbounds,
+        remote_inbounds=remote_inbounds,
+    )
+    session.add_all(created_inbounds)
     await session.flush()
 
     await AuditLogRepository(session).log_action(
@@ -309,13 +252,18 @@ async def sync_server_inbounds(
         action="sync_inbounds",
         entity_type="server",
         entity_id=server.id,
-        payload={"synced": synced_count, "total_remote": len(remote_inbounds)},
+        payload={
+            "synced": synced_count,
+            "disabled": disabled_count,
+            "total_remote": len(remote_inbounds),
+        },
     )
 
     await callback.message.answer(
-        f"✅ سینک اینباندها انجام شد.\n"
-        f"اینباندهای جدید ثبت‌شده: {synced_count}\n"
-        f"کل اینباندها در پنل: {len(remote_inbounds)}"
+        "سینک اینباندها انجام شد.\n"
+        f"اینباند جدید: {synced_count}\n"
+        f"اینباند غیرفعال‌شده: {disabled_count}\n"
+        f"کل اینباندهای پنل: {len(remote_inbounds)}"
     )
 
 
@@ -327,7 +275,11 @@ async def toggle_server(
     admin_user: User,
 ) -> None:
     await callback.answer()
-    server = await session.get(XUIServerRecord, callback_data.server_id)
+    server = await session.scalar(
+        select(XUIServerRecord)
+        .options(selectinload(XUIServerRecord.inbounds))
+        .where(XUIServerRecord.id == callback_data.server_id)
+    )
     if server is None:
         await callback.message.answer(AdminMessages.SERVER_NOT_FOUND)
         return
@@ -335,6 +287,10 @@ async def toggle_server(
     previous_state = server.is_active
     server.is_active = not server.is_active
     server.health_status = "healthy" if server.is_active else "disabled"
+    if not server.is_active:
+        for inbound in server.inbounds:
+            inbound.is_active = False
+
     await AuditLogRepository(session).log_action(
         actor_user_id=admin_user.id,
         action="toggle_server",
@@ -354,7 +310,11 @@ async def delete_server(
     admin_user: User,
 ) -> None:
     await callback.answer()
-    server = await session.get(XUIServerRecord, callback_data.server_id)
+    server = await session.scalar(
+        select(XUIServerRecord)
+        .options(selectinload(XUIServerRecord.inbounds))
+        .where(XUIServerRecord.id == callback_data.server_id)
+    )
     if server is None:
         await callback.message.answer(AdminMessages.SERVER_NOT_FOUND)
         return
@@ -371,11 +331,12 @@ async def delete_server(
         ) or 0
     )
 
-    action_payload: dict[str, object]
     if active_client_count > 0:
         server.is_active = False
         server.health_status = "deleted"
-        action_payload = {"mode": "soft_delete", "active_clients": active_client_count}
+        for inbound in server.inbounds:
+            inbound.is_active = False
+        action_payload: dict[str, object] = {"mode": "soft_delete", "active_clients": active_client_count}
     else:
         action_payload = {"mode": "hard_delete", "active_clients": 0}
         await session.delete(server)
@@ -433,3 +394,60 @@ async def _edit_or_send(
         await callback.message.edit_text(text, reply_markup=reply_markup)
     except TelegramBadRequest:
         await callback.message.answer(text, reply_markup=reply_markup)
+
+
+def _sync_remote_inbounds(
+    *,
+    server_id: UUID,
+    existing_inbounds: Sequence[XUIInboundRecord],
+    remote_inbounds,
+) -> tuple[list[XUIInboundRecord], int, int]:
+    remote_by_id = {remote.id: remote for remote in remote_inbounds}
+    existing_by_remote_id = {inbound.xui_inbound_remote_id: inbound for inbound in existing_inbounds}
+    created: list[XUIInboundRecord] = []
+    created_count = 0
+    disabled_count = 0
+
+    for remote_id, inbound in existing_by_remote_id.items():
+        remote = remote_by_id.get(remote_id)
+        if remote is None:
+            if inbound.is_active:
+                inbound.is_active = False
+                disabled_count += 1
+            continue
+
+        inbound.remark = remote.remark
+        inbound.protocol = remote.protocol
+        inbound.port = remote.port
+        inbound.is_active = True
+
+    for remote in remote_inbounds:
+        if remote.id in existing_by_remote_id:
+            continue
+        created.append(
+            XUIInboundRecord(
+                server_id=server_id,
+                xui_inbound_remote_id=remote.id,
+                remark=remote.remark,
+                protocol=remote.protocol,
+                port=remote.port,
+                tag=None,
+                is_active=True,
+            )
+        )
+        created_count += 1
+
+    return created, created_count, disabled_count
+
+
+async def _fetch_remote_inbounds(*, base_url: str, username: str, password: str):
+    async with SanaeiXUIClient(
+        XUIClientConfig(
+            base_url=base_url,
+            username=username,
+            password=SecretStr(password),
+            timeout_seconds=15.0,
+        )
+    ) as xui_client:
+        await xui_client.login()
+        return await xui_client.get_inbounds()

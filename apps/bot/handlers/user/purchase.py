@@ -8,12 +8,14 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from apps.bot.keyboards.inline import build_plan_selection_keyboard, build_wallet_topup_keyboard
 from core.formatting import format_volume_bytes
 from core.texts import Buttons, Messages
 from models.order import Order
 from models.plan import Plan
+from models.xui import XUIInboundRecord
 from repositories.user import UserRepository
 from services.provisioning.manager import ProvisioningError, ProvisioningManager
 from services.wallet.manager import InsufficientBalanceError, WalletManager
@@ -33,10 +35,15 @@ async def ignore_pagination_noop(callback: CallbackQuery) -> None:
 async def show_available_plans(message: Message, session: AsyncSession) -> None:
     result = await session.execute(
         select(Plan)
+        .options(selectinload(Plan.inbound).selectinload(XUIInboundRecord.server))
         .where(Plan.is_active.is_(True))
         .order_by(Plan.price.asc(), Plan.duration_days.asc())
     )
-    plans = list(result.scalars().all())
+    plans = [
+        plan
+        for plan in result.scalars().all()
+        if plan.inbound is not None and plan.inbound.is_active and plan.inbound.server is not None and plan.inbound.server.is_active
+    ]
     if not plans:
         await message.answer(Messages.NO_PLANS_AVAILABLE)
         return
@@ -64,9 +71,16 @@ async def purchase_plan_callback(
         return
 
     user = await UserRepository(session).get_by_telegram_id(callback.from_user.id)
-    plan = await session.get(Plan, plan_id)
+    plan = await session.scalar(
+        select(Plan)
+        .options(selectinload(Plan.inbound).selectinload(XUIInboundRecord.server))
+        .where(Plan.id == plan_id)
+    )
     if user is None or user.wallet is None or plan is None or not plan.is_active:
         await callback.message.answer(Messages.PLAN_NOT_AVAILABLE)
+        return
+    if plan.inbound is None or not plan.inbound.is_active or plan.inbound.server is None or not plan.inbound.server.is_active:
+        await callback.message.answer(Messages.PLAN_CONFIG_UNAVAILABLE)
         return
 
     if user.wallet.balance < plan.price:
@@ -138,6 +152,8 @@ async def purchase_plan_callback(
                 order.id, refund_exc,
             )
             order.status = "failed_needs_manual_refund"
+            await callback.message.answer(Messages.PROVISIONING_FAILED_MANUAL_REFUND)
+            return
         await callback.message.answer(Messages.PROVISIONING_FAILED_REFUNDED)
         return
 

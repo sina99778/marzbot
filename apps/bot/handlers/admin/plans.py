@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -108,7 +109,11 @@ async def create_plan_start(callback: CallbackQuery, state: FSMContext, session:
     result = await session.execute(
         select(XUIInboundRecord)
         .options(selectinload(XUIInboundRecord.server))
-        .where(XUIInboundRecord.is_active.is_(True))
+        .join(XUIInboundRecord.server)
+        .where(
+            XUIInboundRecord.is_active.is_(True),
+            XUIInboundRecord.server.has(is_active=True),
+        )
         .order_by(XUIInboundRecord.created_at.asc())
     )
     inbounds = list(result.scalars().all())
@@ -157,7 +162,11 @@ async def create_plan_inbound_selected(
     inbound = await session.scalar(
         select(XUIInboundRecord)
         .options(selectinload(XUIInboundRecord.server))
-        .where(XUIInboundRecord.id == callback_data.inbound_id)
+        .where(
+            XUIInboundRecord.id == callback_data.inbound_id,
+            XUIInboundRecord.is_active.is_(True),
+            XUIInboundRecord.server.has(is_active=True),
+        )
     )
     if inbound is None:
         await callback.message.answer("اینباند پیدا نشد.")
@@ -241,7 +250,7 @@ async def create_plan_price(
     protocol = str(form_data["protocol"])
     inbound_id = UUID(str(form_data["inbound_id"]))
     code = (
-        f"{protocol}_{int(form_data['duration_days'])}d_"
+        f"{protocol}_{inbound_id.hex[:8]}_{int(form_data['duration_days'])}d_"
         f"{int(form_data['volume_gb'])}gb_{price.normalize()}"
     )
 
@@ -258,7 +267,12 @@ async def create_plan_price(
         is_active=True,
     )
     session.add(plan)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        await message.answer(AdminMessages.PLAN_CODE_EXISTS)
+        return
     await AuditLogRepository(session).log_action(
         actor_user_id=admin_user.id,
         action="create_plan",

@@ -90,7 +90,12 @@ class ProvisioningManager:
                 "ابتدا یک سرور اضافه کنید."
             )
 
+        if not inbound.is_active:
+            raise ProvisioningError("The selected inbound is inactive.")
+
         server = ensure_inbound_server_loaded(inbound)
+        if not server.is_active:
+            raise ProvisioningError("The selected server is inactive.")
         client_uuid, username, email, sub_id = await self._generate_unique_client_identity()
         sub_link = build_sub_link(server.base_url, sub_id)
 

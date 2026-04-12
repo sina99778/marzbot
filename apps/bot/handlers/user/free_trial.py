@@ -7,11 +7,13 @@ from aiogram import F, Router
 from aiogram.types import Message
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from core.formatting import format_volume_bytes
 from core.texts import Buttons, Messages
 from models.order import Order
 from models.plan import Plan
+from models.xui import XUIInboundRecord
 from repositories.user import UserRepository
 from services.provisioning.manager import ProvisioningError, ProvisioningManager
 
@@ -37,12 +39,20 @@ async def free_trial_handler(message: Message, session: AsyncSession) -> None:
         return
 
     trial_plan = await session.scalar(
-        select(Plan).where(
+        select(Plan)
+        .options(selectinload(Plan.inbound).selectinload(XUIInboundRecord.server))
+        .where(
             Plan.is_active.is_(True),
             or_(Plan.code == "TRIAL_PLAN", Plan.price == Decimal("0")),
         )
     )
     if trial_plan is None:
+        await message.answer(Messages.TRIAL_PLAN_NOT_FOUND)
+        return
+    if trial_plan.inbound is None or not trial_plan.inbound.is_active:
+        await message.answer(Messages.TRIAL_PLAN_NOT_FOUND)
+        return
+    if trial_plan.inbound.server is None or not trial_plan.inbound.server.is_active:
         await message.answer(Messages.TRIAL_PLAN_NOT_FOUND)
         return
 
