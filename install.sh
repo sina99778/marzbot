@@ -180,6 +180,9 @@ install_prerequisites_and_ssl() {
   if ! docker compose version >/dev/null 2>&1; then
     apt-get install -y docker-compose-plugin || true
   fi
+  if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+    apt-get install -y docker-compose || true
+  fi
 
   systemctl enable --now docker
   systemctl enable --now nginx
