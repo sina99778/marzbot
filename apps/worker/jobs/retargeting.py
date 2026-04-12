@@ -10,17 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from core.database import utcnow
-from core.texts import MarketingTexts
 from models.order import Order
 from models.user import User
+from repositories.settings import AppSettingsRepository
 
 
-RETARGETING_DAYS = 30
 RETARGETING_CONCURRENCY = 20
 
 
 async def process_retargeting_campaigns(session: AsyncSession, bot: Bot) -> None:
-    cutoff = utcnow() - timedelta(days=RETARGETING_DAYS)
+    settings = await AppSettingsRepository(session).get_retargeting_settings()
+    if not settings.enabled:
+        return
+
+    cutoff = utcnow() - timedelta(days=settings.days)
     latest_order_subquery = (
         select(Order.user_id, func.max(Order.created_at).label("last_order_at"))
         .group_by(Order.user_id)
@@ -45,7 +48,7 @@ async def process_retargeting_campaigns(session: AsyncSession, bot: Bot) -> None
             try:
                 await bot.send_message(
                     chat_id=user.telegram_id,
-                    text=MarketingTexts.RETARGETING_REMINDER,
+                    text=settings.message,
                 )
             except TelegramForbiddenError:
                 user.is_bot_blocked = True

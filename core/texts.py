@@ -103,6 +103,7 @@ class AdminButtons:
     STATISTICS = "📊 آمار و گزارش‌ها"
     MANAGE_USERS = "👥 مدیریت کاربران"
     BROADCAST = "📢 پیام همگانی"
+    MANAGE_RETARGETING = "🎯 مدیریت ریتارگتینگ"
     ADD_SERVER = "افزودن سرور"
     LIST_SERVERS = "لیست سرورها"
     TOGGLE_SERVER = "تغییر وضعیت فعال/غیرفعال"
@@ -115,6 +116,10 @@ class AdminButtons:
     UNBAN_USER = "✅ رفع مسدودی کاربر"
     VIEW_CONFIGS = "📋 مشاهده کانفیگ‌های کاربر"
     REVOKE_CONFIG = "🗑 لغو کانفیگ"
+    EDIT_RETARGETING_TEXT = "✏️ ویرایش متن"
+    EDIT_RETARGETING_DAYS = "⏳ تغییر بازه روز"
+    TOGGLE_RETARGETING = "🔁 فعال/غیرفعال"
+    TEST_RETARGETING = "🧪 ارسال تست"
 
 
 class AdminMessages:
@@ -175,6 +180,16 @@ class AdminMessages:
     BROADCAST_CANCELLED = "ارسال همگانی لغو شد."
     BROADCAST_CONFIRM_HINT = "فقط `confirm` یا `cancel` را ارسال کنید."
     BROADCAST_QUEUED = "پیام همگانی `{job_id}` با موفقیت در صف قرار گرفت."
+    RETARGETING_MENU = (
+        "مدیریت ریتارگتینگ\n\n"
+        "وضعیت: {status}\n"
+        "بازه عدم خرید: {days} روز\n\n"
+        "متن فعلی:\n{message}"
+    )
+    RETARGETING_ENTER_MESSAGE = "متن جدید ریتارگتینگ را بفرستید. برای لغو /cancel را ارسال کنید."
+    RETARGETING_ENTER_DAYS = "تعداد روزهای عدم خرید را وارد کنید. برای لغو /cancel را ارسال کنید."
+    RETARGETING_UPDATED = "تنظیمات ریتارگتینگ به‌روزرسانی شد."
+    RETARGETING_TEST_SENT = "نسخه تست پیام ریتارگتینگ برای شما ارسال شد."
 
 
 class Common:
