@@ -220,5 +220,9 @@ def _build_user_profile_keyboard(user_id: UUID, status: str):
         text=AdminButtons.VIEW_CONFIGS,
         callback_data=AdminUserActionCallback(action="view_configs", user_id=user_id).pack(),
     )
+    builder.button(
+        text=AdminButtons.BACK,
+        callback_data="admin:main",
+    )
     builder.adjust(1)
     return builder.as_markup()

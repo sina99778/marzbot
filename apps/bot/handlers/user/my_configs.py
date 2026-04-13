@@ -92,6 +92,58 @@ async def my_configs_handler(message: Message, session: AsyncSession) -> None:
     )
 
 
+@router.callback_query(F.data == "myconfig:back_to_list")
+async def my_configs_back_to_list(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Re-render the config list when user presses back."""
+    await callback.answer()
+    if callback.from_user is None:
+        return
+
+    user = await UserRepository(session).get_by_telegram_id(callback.from_user.id)
+    if user is None:
+        return
+
+    result = await session.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.plan))
+        .where(
+            Subscription.user_id == user.id,
+            Subscription.status.in_(list(_ACTIVE_STATUSES)),
+        )
+        .order_by(Subscription.created_at.desc())
+    )
+    subscriptions = list(result.scalars().all())
+
+    if not subscriptions:
+        if callback.message is not None:
+            await callback.message.answer("📭 شما هیچ کانفیگ فعالی ندارید.")
+        return
+
+    builder = InlineKeyboardBuilder()
+    for sub in subscriptions:
+        plan_name = sub.plan.name if sub.plan else "نامشخص"
+        status_emoji = "✅" if sub.status == "active" else "⏳"
+        label = f"{status_emoji} {plan_name}"
+        if sub.ends_at is not None:
+            now = datetime.now(timezone.utc)
+            remaining_days = max((sub.ends_at - now).days, 0)
+            label += f" — {remaining_days} روز"
+        elif sub.status == "pending_activation":
+            label += " — هنوز فعال نشده"
+        builder.button(
+            text=label,
+            callback_data=MyConfigCallback(action="view", subscription_id=sub.id).pack(),
+        )
+    builder.adjust(1)
+
+    if callback.message is not None:
+        await callback.message.answer(
+            f"📋 کانفیگ‌های فعال شما ({len(subscriptions)} عدد):\n"
+            "برای مشاهده جزئیات روی هر کدام بزنید:",
+            reply_markup=builder.as_markup(),
+        )
+
+
 @router.callback_query(MyConfigCallback.filter(F.action == "view"))
 async def my_config_detail_handler(
     callback: CallbackQuery,
@@ -185,8 +237,12 @@ async def my_config_detail_handler(
 
     text = "\n".join(lines)
 
+    builder = InlineKeyboardBuilder()
+    builder.button(text=Buttons.BACK, callback_data="myconfig:back_to_list")
+    builder.adjust(1)
+
     if callback.message is not None:
-        await callback.message.answer(text)
+        await callback.message.answer(text, reply_markup=builder.as_markup())
 
     # Send QR code
     if vless_uri:

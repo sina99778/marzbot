@@ -61,6 +61,7 @@ async def support_ticket_list(callback: CallbackQuery, session: AsyncSession) ->
             text=f"{user_name} | {_format_ticket_status(ticket.status)}",
             callback_data=SupportTicketActionCallback(action="view", ticket_id=ticket.id).pack(),
         )
+    builder.button(text="🔙 بازگشت", callback_data="admin:main")
     builder.adjust(1)
     await callback.message.answer("\n\n".join(lines), reply_markup=builder.as_markup())
 

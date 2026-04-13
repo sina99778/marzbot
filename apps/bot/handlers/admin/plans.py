@@ -88,6 +88,7 @@ async def admin_plans_menu(callback: CallbackQuery) -> None:
     builder = InlineKeyboardBuilder()
     builder.button(text=AdminButtons.CREATE_PLAN, callback_data="admin:plans:create")
     builder.button(text=AdminButtons.LIST_PLANS, callback_data=PlanListPageCallback(page=1).pack())
+    builder.button(text=AdminButtons.BACK, callback_data="admin:main")
     builder.adjust(1)
     await callback.message.answer(AdminMessages.PLAN_MANAGEMENT, reply_markup=builder.as_markup())
 

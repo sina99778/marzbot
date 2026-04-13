@@ -11,6 +11,7 @@ class Buttons:
     OPEN_PAYMENT = "🔗 باز کردن صفحه پرداخت"
     PREV = "⬅️ قبلی"
     NEXT = "بعدی ➡️"
+    BACK = "🔙 بازگشت"
 
 
 class Messages:
@@ -124,6 +125,7 @@ class AdminButtons:
     EDIT_RETARGETING_TEXT = "✏️ ویرایش متن"
     EDIT_RETARGETING_DAYS = "⏳ تغییر بازه روز"
     TOGGLE_RETARGETING = "🔁 فعال/غیرفعال"
+    BACK = "🔙 بازگشت"
     TEST_RETARGETING = "🧪 ارسال تست"
 
 

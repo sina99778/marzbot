@@ -60,12 +60,29 @@ async def admin_main_menu(message: Message) -> None:
     await message.answer(AdminMessages.PANEL_TITLE, reply_markup=builder.as_markup())
 
 
+@router.callback_query(F.data == "admin:main")
+async def admin_main_menu_callback(callback: CallbackQuery) -> None:
+    """Back button target: re-render admin main menu."""
+    await callback.answer()
+    builder = InlineKeyboardBuilder()
+    builder.button(text=AdminButtons.MANAGE_SERVERS, callback_data="admin:servers")
+    builder.button(text=AdminButtons.MANAGE_PLANS, callback_data="admin:plans")
+    builder.button(text=AdminButtons.MANAGE_USERS, callback_data="admin:users")
+    builder.button(text=AdminButtons.BROADCAST, callback_data="admin:broadcast")
+    builder.button(text=AdminButtons.MANAGE_TICKETS, callback_data="admin:tickets")
+    builder.button(text=AdminButtons.MANAGE_RETARGETING, callback_data="admin:retargeting")
+    builder.button(text=AdminButtons.STATISTICS, callback_data="admin:stats")
+    builder.adjust(1)
+    await callback.message.answer(AdminMessages.PANEL_TITLE, reply_markup=builder.as_markup())
+
+
 @router.callback_query(F.data == "admin:servers")
 async def admin_servers_menu(callback: CallbackQuery) -> None:
     await callback.answer()
     builder = InlineKeyboardBuilder()
     builder.button(text=AdminButtons.ADD_SERVER, callback_data="admin:servers:add")
     builder.button(text=AdminButtons.LIST_SERVERS, callback_data=ServerListPageCallback(page=1).pack())
+    builder.button(text=AdminButtons.BACK, callback_data="admin:main")
     builder.adjust(1)
     await callback.message.answer(AdminMessages.SERVER_MANAGEMENT, reply_markup=builder.as_markup())
 

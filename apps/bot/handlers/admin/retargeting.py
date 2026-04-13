@@ -171,6 +171,10 @@ def _build_retargeting_keyboard():
         text=AdminButtons.TEST_RETARGETING,
         callback_data=RetargetingActionCallback(action="test").pack(),
     )
+    builder.button(
+        text=AdminButtons.BACK,
+        callback_data="admin:main",
+    )
     builder.adjust(1)
     return builder.as_markup()
 
