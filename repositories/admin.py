@@ -25,12 +25,14 @@ class AdminStatsRepository:
         )
         return int(result or 0)
 
-    async def get_total_revenue(self) -> Decimal:
-        result = await self.session.scalar(
-            select(func.coalesce(func.sum(Order.amount), 0)).select_from(Order).where(
-                Order.status.in_(["paid", "processing", "provisioned"])
-            )
+    async def get_total_revenue(self, reset_at: datetime | None = None) -> Decimal:
+        stmt = select(func.coalesce(func.sum(Order.amount), 0)).select_from(Order).where(
+            Order.status.in_(["paid", "processing", "provisioned"])
         )
+        if reset_at:
+            stmt = stmt.where(Order.created_at >= reset_at)
+            
+        result = await self.session.scalar(stmt)
         return Decimal(str(result or 0))
 
     async def get_total_active_servers(self) -> int:

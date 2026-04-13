@@ -243,18 +243,33 @@ async def my_config_detail_handler(
     builder.button(text=Buttons.BACK, callback_data="myconfig:back_to_list")
     builder.adjust(1)
 
-    if callback.message is not None:
-        await callback.message.answer(text, reply_markup=builder.as_markup())
-
-    # Send QR code
+    # If QR code is available, send photo with text as caption
     if vless_uri:
         qr_bytes = make_qr_bytes(vless_uri)
         if qr_bytes:
+            # Delete the previous text-only message if it was an edit from list
+            # Actually, callback.message.edit_text works for text, but to switch to photo
+            # we usually need to send a NEW message or use edit_message_media.
+            # To keep it simple and reliable, we'll send a NEW message and try to delete the old one.
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            
             await bot.send_photo(
                 chat_id=callback.from_user.id,
                 photo=BufferedInputFile(qr_bytes, filename="config_qr.png"),
-                caption=f"📷 QR کد کانفیگ {plan_name}",
+                caption=text,
+                reply_markup=builder.as_markup(),
             )
+            return
+
+    # Fallback to text message if no QR or QR failed
+    if callback.message is not None:
+        try:
+            await callback.message.edit_text(text, reply_markup=builder.as_markup())
+        except Exception:
+            await callback.message.answer(text, reply_markup=builder.as_markup())
 
 
 def _status_fa(status: str) -> str:

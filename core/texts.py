@@ -143,6 +143,7 @@ class AdminButtons:
     TOGGLE_RETARGETING = "🔁 فعال/غیرفعال"
     BACK = "🔙 بازگشت"
     TEST_RETARGETING = "🧪 ارسال تست"
+    RESET_REVENUE = "🗑 صفر کردن درآمد"
 
 
 class AdminMessages:
@@ -233,6 +234,8 @@ class AdminMessages:
     ENTER_PRICE_PER_GB = "قیمت تمدید برای ۱ گیگابایت (به دلار) را وارد کنید:"
     ENTER_PRICE_PER_10_DAYS = "قیمت تمدید برای ۱۰ روز (به دلار) را وارد کنید:"
     SETTINGS_UPDATED = "تنظیمات با موفقیت بروزرسانی شد."
+    CONFIRM_RESET_REVENUE = "آیا از صفر کردن آمار درآمد اطمینان دارید؟ این عمل قابل بازگشت نیست."
+    REVENUE_RESET_SUCCESS = "آمار درآمد با موفقیت صفر شد."
 
 
 class Common:

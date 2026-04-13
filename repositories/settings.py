@@ -26,9 +26,36 @@ class RetargetingSettings:
     message: str
 
 
+REVENUE_SETTINGS_KEY = "admin.revenue_reset"
+
 class AppSettingsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def get_revenue_reset_at(self) -> datetime | None:
+        record = await self.session.get(AppSetting, REVENUE_SETTINGS_KEY)
+        if record is None or not record.value_json:
+            return None
+        
+        from datetime import datetime, timezone
+        reset_at_str = record.value_json.get("reset_at")
+        if not reset_at_str:
+            return None
+        
+        try:
+            return datetime.fromisoformat(reset_at_str)
+        except ValueError:
+            return None
+
+    async def reset_revenue(self) -> None:
+        from datetime import datetime, timezone
+        record = await self.session.get(AppSetting, REVENUE_SETTINGS_KEY)
+        if record is None:
+            record = AppSetting(key=REVENUE_SETTINGS_KEY)
+        
+        record.value_json = {"reset_at": datetime.now(timezone.utc).isoformat()}
+        self.session.add(record)
+        await self.session.flush()
 
     async def get_renewal_settings(self) -> RenewalSettings:
         record = await self._get_or_create_renewal_record()
