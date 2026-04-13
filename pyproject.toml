@@ -27,7 +27,7 @@ dependencies = [
   "apscheduler>=3.10.4,<4.0.0",
   "tenacity>=9.0.0,<10.0.0",
   "cryptography>=43.0.0,<44.0.0",
-  "qrcode[pil]>=7.4.2,<8.0.0"
+  "segno>=1.6.0,<2.0.0"
 ]
 
 [project.optional-dependencies]

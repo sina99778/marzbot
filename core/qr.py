@@ -8,27 +8,18 @@ logger = logging.getLogger(__name__)
 
 def make_qr_bytes(text: str) -> bytes:
     """
-    Generate a QR code PNG for the given text and return raw bytes.
-    Returns empty bytes if qrcode or Pillow is not installed.
+    Generate a QR code PNG using segno (pure Python, no Pillow needed).
+    Returns empty bytes if segno is not installed.
     """
     try:
-        import qrcode
-        from qrcode.image.pil import PilImage
+        import segno
 
-        qr = qrcode.QRCode(
-            version=None,
-            error_correction=qrcode.constants.ERROR_CORRECT_L,
-            box_size=10,
-            border=4,
-        )
-        qr.add_data(text)
-        qr.make(fit=True)
-        img: PilImage = qr.make_image(fill_color="black", back_color="white")
+        qr = segno.make_qr(text, error="L")
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        qr.save(buf, kind="png", scale=10, border=4)
         return buf.getvalue()
     except ImportError:
-        logger.warning("qrcode or Pillow not installed — QR codes disabled.")
+        logger.warning("segno not installed — QR codes disabled.")
         return b""
     except Exception as exc:
         logger.error("QR code generation failed: %s", exc)
