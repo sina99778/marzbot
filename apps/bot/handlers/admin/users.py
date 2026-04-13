@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+from math import ceil
 from uuid import UUID
 
 from aiogram import F, Router
@@ -8,7 +9,7 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,17 +28,114 @@ router = Router(name="admin-users")
 router.message.middleware(AdminOnlyMiddleware())
 router.callback_query.middleware(AdminOnlyMiddleware())
 
+USER_PAGE_SIZE = 10
+
 
 class AdminUserActionCallback(CallbackData, prefix="admin_user"):
     action: str
     user_id: UUID
 
 
+class AdminUserListPageCallback(CallbackData, prefix="admin_userlist"):
+    page: int
+
+
+# ─── Users Menu ───────────────────────────────────────────────────────────────
+
+
 @router.callback_query(F.data == "admin:users")
-async def admin_users_start(callback: CallbackQuery, state: FSMContext) -> None:
+async def admin_users_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    """Show users management menu with list and search options."""
+    await callback.answer()
+    await state.clear()
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👥 لیست کاربران", callback_data=AdminUserListPageCallback(page=1).pack())
+    builder.button(text="🔍 جستجوی کاربر", callback_data="admin:users:search")
+    builder.button(text=AdminButtons.BACK, callback_data="admin:main")
+    builder.adjust(1)
+    await callback.message.answer("مدیریت کاربران:", reply_markup=builder.as_markup())
+
+
+# ─── User List (Paginated) ────────────────────────────────────────────────────
+
+
+@router.callback_query(AdminUserListPageCallback.filter())
+async def admin_users_list(
+    callback: CallbackQuery,
+    callback_data: AdminUserListPageCallback,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    page = max(callback_data.page, 1)
+
+    total_users = int(
+        await session.scalar(select(func.count()).select_from(User)) or 0
+    )
+    total_pages = max(ceil(total_users / USER_PAGE_SIZE), 1)
+    offset = (page - 1) * USER_PAGE_SIZE
+
+    result = await session.execute(
+        select(User)
+        .options(selectinload(User.wallet))
+        .order_by(User.created_at.desc())
+        .offset(offset)
+        .limit(USER_PAGE_SIZE)
+    )
+    users = list(result.scalars().all())
+
+    if not users:
+        builder = InlineKeyboardBuilder()
+        builder.button(text=AdminButtons.BACK, callback_data="admin:users")
+        builder.adjust(1)
+        await callback.message.answer("هیچ کاربری وجود ندارد.", reply_markup=builder.as_markup())
+        return
+
+    builder = InlineKeyboardBuilder()
+    for user in users:
+        name = user.first_name or user.username or str(user.telegram_id)
+        balance = f"{user.wallet.balance:.2f}" if user.wallet else "0.00"
+        status_icon = "🟢" if user.status == "active" else "🔴"
+        builder.button(
+            text=f"{status_icon} {name} | ${balance}",
+            callback_data=AdminUserActionCallback(action="profile", user_id=user.id).pack(),
+        )
+
+    # Pagination
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(("⬅️ قبلی", AdminUserListPageCallback(page=page - 1).pack()))
+    nav_buttons.append((f"📄 {page}/{total_pages}", "pagination:noop"))
+    if page < total_pages:
+        nav_buttons.append(("بعدی ➡️", AdminUserListPageCallback(page=page + 1).pack()))
+
+    for text, cb in nav_buttons:
+        builder.button(text=text, callback_data=cb)
+
+    builder.button(text=AdminButtons.BACK, callback_data="admin:users")
+
+    # Layout: user buttons 1 per row, then pagination row, then back
+    rows = [1] * len(users)
+    rows.append(len(nav_buttons))
+    rows.append(1)
+    builder.adjust(*rows)
+
+    await callback.message.answer(
+        f"👥 لیست کاربران ({total_users} نفر):",
+        reply_markup=builder.as_markup(),
+    )
+
+
+# ─── User Search ──────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data == "admin:users:search")
+async def admin_users_search_prompt(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await state.set_state(ManageUserStates.waiting_for_telegram_id)
-    await callback.message.answer(AdminMessages.ASK_USER_TELEGRAM_ID)
+    await callback.message.answer(
+        "🔍 شناسه تلگرام (عددی) یا یوزرنیم کاربر را ارسال کنید.\n"
+        "برای لغو /cancel بزنید."
+    )
 
 
 @router.message(ManageUserStates.waiting_for_telegram_id)
@@ -49,22 +147,32 @@ async def admin_users_lookup(
     if not message.text:
         return
 
-    try:
-        telegram_id = int(message.text.strip())
-    except ValueError:
-        await message.answer("Telegram ID must be a valid integer.")
-        return
+    query_text = message.text.strip().lstrip("@")
 
-    user = await session.scalar(
-        select(User)
-        .options(
-            selectinload(User.wallet),
-            selectinload(User.subscriptions),
+    # Try numeric telegram_id first, fallback to username search
+    user: User | None = None
+    try:
+        telegram_id = int(query_text)
+        user = await session.scalar(
+            select(User)
+            .options(selectinload(User.wallet), selectinload(User.subscriptions))
+            .where(User.telegram_id == telegram_id)
         )
-        .where(User.telegram_id == telegram_id)
-    )
+    except ValueError:
+        # Search by username (case-insensitive)
+        user = await session.scalar(
+            select(User)
+            .options(selectinload(User.wallet), selectinload(User.subscriptions))
+            .where(func.lower(User.username) == query_text.lower())
+        )
+
     if user is None or user.wallet is None:
-        await message.answer(AdminMessages.USER_NOT_FOUND)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔍 جستجوی مجدد", callback_data="admin:users:search")
+        builder.button(text=AdminButtons.BACK, callback_data="admin:users")
+        builder.adjust(1)
+        await message.answer(AdminMessages.USER_NOT_FOUND, reply_markup=builder.as_markup())
+        await state.clear()
         return
 
     total_orders = int(
@@ -75,6 +183,37 @@ async def admin_users_lookup(
         _build_user_profile_text(user=user, total_orders=total_orders),
         reply_markup=_build_user_profile_keyboard(user.id, user.status),
     )
+
+
+# ─── User Profile (from list click) ──────────────────────────────────────────
+
+
+@router.callback_query(AdminUserActionCallback.filter(F.action == "profile"))
+async def admin_user_profile_from_list(
+    callback: CallbackQuery,
+    callback_data: AdminUserActionCallback,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    user = await session.scalar(
+        select(User)
+        .options(selectinload(User.wallet), selectinload(User.subscriptions))
+        .where(User.id == callback_data.user_id)
+    )
+    if user is None or user.wallet is None:
+        await callback.message.answer(AdminMessages.USER_NOT_FOUND)
+        return
+
+    total_orders = int(
+        await session.scalar(select(func.count()).select_from(Order).where(Order.user_id == user.id)) or 0
+    )
+    await callback.message.answer(
+        _build_user_profile_text(user=user, total_orders=total_orders),
+        reply_markup=_build_user_profile_keyboard(user.id, user.status),
+    )
+
+
+# ─── Edit Balance ─────────────────────────────────────────────────────────────
 
 
 @router.callback_query(AdminUserActionCallback.filter(F.action == "edit_balance"))
@@ -147,7 +286,6 @@ async def admin_edit_balance_submit(
     total_orders = int(
         await session.scalar(select(func.count()).select_from(Order).where(Order.user_id == user.id)) or 0
     )
-    # Reload user with wallet to get the updated balance
     await session.refresh(user, attribute_names=["wallet"])
     if user.wallet is not None:
         await session.refresh(user.wallet)
@@ -156,6 +294,9 @@ async def admin_edit_balance_submit(
         _build_user_profile_text(user=user, total_orders=total_orders),
         reply_markup=_build_user_profile_keyboard(user.id, user.status),
     )
+
+
+# ─── Toggle Ban ───────────────────────────────────────────────────────────────
 
 
 @router.callback_query(AdminUserActionCallback.filter(F.action == "toggle_ban"))
@@ -195,6 +336,9 @@ async def admin_toggle_ban(
     )
 
 
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+
 def _build_user_profile_text(*, user: User, total_orders: int) -> str:
     wallet_balance = user.wallet.balance if user.wallet is not None else Decimal("0")
     return AdminMessages.USER_PROFILE.format(
@@ -222,7 +366,7 @@ def _build_user_profile_keyboard(user_id: UUID, status: str):
     )
     builder.button(
         text=AdminButtons.BACK,
-        callback_data="admin:main",
+        callback_data="admin:users",
     )
     builder.adjust(1)
     return builder.as_markup()
