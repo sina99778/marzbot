@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from uuid import UUID
 
 from aiogram import Bot, F, Router
-from aiogram.types import BufferedInputFile, Message
+from aiogram.filters.callback_data import CallbackData
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,7 +18,7 @@ from core.texts import Buttons
 from models.subscription import Subscription
 from models.xui import XUIClientRecord, XUIInboundRecord
 from repositories.user import UserRepository
-from services.xui.runtime import build_vless_uri, ensure_inbound_server_loaded
+from services.xui.runtime import build_vless_uri
 
 
 logger = logging.getLogger(__name__)
@@ -25,8 +28,14 @@ router = Router(name="user-my-configs")
 _ACTIVE_STATUSES = {"pending_activation", "active"}
 
 
+class MyConfigCallback(CallbackData, prefix="myconfig"):
+    action: str
+    subscription_id: UUID
+
+
 @router.message(F.text == Buttons.MY_CONFIGS)
-async def my_configs_handler(message: Message, session: AsyncSession, bot: Bot) -> None:
+async def my_configs_handler(message: Message, session: AsyncSession) -> None:
+    """Show a list of inline buttons for each active config."""
     if message.from_user is None:
         return
 
@@ -37,12 +46,7 @@ async def my_configs_handler(message: Message, session: AsyncSession, bot: Bot) 
 
     result = await session.execute(
         select(Subscription)
-        .options(
-            selectinload(Subscription.plan),
-            selectinload(Subscription.xui_client)
-            .selectinload(XUIClientRecord.inbound)
-            .selectinload(XUIInboundRecord.server)
-        )
+        .options(selectinload(Subscription.plan))
         .where(
             Subscription.user_id == user.id,
             Subscription.status.in_(list(_ACTIVE_STATUSES)),
@@ -53,92 +57,146 @@ async def my_configs_handler(message: Message, session: AsyncSession, bot: Bot) 
 
     if not subscriptions:
         await message.answer(
-            "📭 *شما هیچ کانفیگ فعالی ندارید\.*\n\n"
-            "از دکمه *خرید کانفیگ* می\u200cتوانید یک پلن تهیه کنید\.",
-            parse_mode="MarkdownV2",
+            "📭 شما هیچ کانفیگ فعالی ندارید.\n\n"
+            "از دکمه «خرید کانفیگ» می‌توانید یک پلن تهیه کنید."
         )
         return
 
-    await message.answer(
-        f"📋 *کانفیگ‌های فعال شما* \\({len(subscriptions)} عدد\\):",
-        parse_mode="MarkdownV2",
-    )
-
+    builder = InlineKeyboardBuilder()
     for idx, sub in enumerate(subscriptions, start=1):
-        plan = sub.plan
-        xui = sub.xui_client
+        plan_name = sub.plan.name if sub.plan else "نامشخص"
+        status_emoji = "✅" if sub.status == "active" else "⏳"
+        label = f"{status_emoji} {plan_name}"
 
-        plan_name = _escape(plan.name if plan else "نامشخص")
-        volume_total = format_volume_bytes(sub.volume_bytes)
-        volume_used = format_volume_bytes(sub.used_bytes)
-        volume_remaining = format_volume_bytes(max(sub.volume_bytes - sub.used_bytes, 0))
-
-        # Time remaining
+        # Add remaining time/volume hint
         if sub.ends_at is not None:
             now = datetime.now(timezone.utc)
             remaining_days = max((sub.ends_at - now).days, 0)
-            ends_label = f"{remaining_days} روز مانده"
+            label += f" — {remaining_days} روز"
         elif sub.status == "pending_activation":
-            ends_label = "هنوز فعال نشده"
-        else:
-            ends_label = "نامحدود"
+            label += " — هنوز فعال نشده"
 
-        sub_link = sub.sub_link or (xui.sub_link if xui else None) or "-"
-
-        # Try to reconstruct vless URI from xui record
-        vless_uri = None
-        if xui and xui.inbound:
-            try:
-                inbound = xui.inbound
-                # Load server via inbound relation (already loaded via selectinload)
-                if inbound.server:
-                    # Extract sub_id safely from sub_link
-                    raw_sub_link = sub_link
-                    if raw_sub_link and raw_sub_link != "-" and "/" in raw_sub_link:
-                        extracted_sub_id = raw_sub_link.rsplit("/", 1)[-1]
-                    else:
-                        extracted_sub_id = ""
-                    vless_uri = build_vless_uri(
-                        client_uuid=xui.client_uuid,
-                        server=inbound.server,
-                        inbound=inbound,
-                        sub_id=extracted_sub_id,
-                        remark=plan.name if plan else "VPN",
-                    )
-            except Exception as exc:
-                logger.warning("Failed to build vless_uri for sub %s: %s", sub.id, exc)
-
-        # Build card text
-        text = (
-            f"*کانفیگ {idx}* — {plan_name}\n\n"
-            f"💾 حجم کل: `{_escape(volume_total)}`\n"
-            f"📊 مصرف شده: `{_escape(volume_used)}`\n"
-            f"✅ باقی‌مانده: `{_escape(volume_remaining)}`\n"
-            f"📅 زمان: {_escape(ends_label)}\n"
-            f"🔄 وضعیت: {_escape(_status_fa(sub.status))}\n\n"
-            f"🔗 *ساب لینک:*\n`{_escape(sub_link)}`\n"
+        builder.button(
+            text=label,
+            callback_data=MyConfigCallback(
+                action="view",
+                subscription_id=sub.id,
+            ).pack(),
         )
+    builder.adjust(1)
 
-        if vless_uri:
-            text += f"\n📋 *کانفیگ مستقیم:*\n`{_escape(vless_uri)}`\n"
+    await message.answer(
+        f"📋 کانفیگ‌های فعال شما ({len(subscriptions)} عدد):\n"
+        "برای مشاهده جزئیات روی هر کدام بزنید:",
+        reply_markup=builder.as_markup(),
+    )
 
-        await message.answer(text, parse_mode="MarkdownV2")
 
-        # Send QR only if we have a VLESS URI
-        if vless_uri:
-            qr_bytes = make_qr_bytes(vless_uri)
-            if qr_bytes:
-                await bot.send_photo(
-                    chat_id=message.from_user.id,
-                    photo=BufferedInputFile(qr_bytes, filename=f"config_{idx}_qr.png"),
-                    caption=f"📷 QR کد کانفیگ {idx}",
+@router.callback_query(MyConfigCallback.filter(F.action == "view"))
+async def my_config_detail_handler(
+    callback: CallbackQuery,
+    callback_data: MyConfigCallback,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    """Show full details for a single config when user clicks its button."""
+    await callback.answer()
+    if callback.from_user is None:
+        return
+
+    user = await UserRepository(session).get_by_telegram_id(callback.from_user.id)
+    if user is None:
+        if callback.message is not None:
+            await callback.message.answer("حساب شما پیدا نشد.")
+        return
+
+    sub = await session.scalar(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.plan),
+            selectinload(Subscription.xui_client)
+            .selectinload(XUIClientRecord.inbound)
+            .selectinload(XUIInboundRecord.server),
+        )
+        .where(
+            Subscription.id == callback_data.subscription_id,
+            Subscription.user_id == user.id,
+        )
+    )
+    if sub is None:
+        if callback.message is not None:
+            await callback.message.answer("کانفیگ پیدا نشد یا متعلق به شما نیست.")
+        return
+
+    plan = sub.plan
+    xui = sub.xui_client
+
+    plan_name = plan.name if plan else "نامشخص"
+    volume_total = format_volume_bytes(sub.volume_bytes)
+    volume_used = format_volume_bytes(sub.used_bytes)
+    volume_remaining = format_volume_bytes(max(sub.volume_bytes - sub.used_bytes, 0))
+
+    # Time remaining
+    if sub.ends_at is not None:
+        now = datetime.now(timezone.utc)
+        remaining_days = max((sub.ends_at - now).days, 0)
+        ends_label = f"{remaining_days} روز مانده"
+    elif sub.status == "pending_activation":
+        ends_label = "هنوز فعال نشده (از اولین اتصال شروع می‌شود)"
+    else:
+        ends_label = "نامحدود"
+
+    sub_link = sub.sub_link or (xui.sub_link if xui else None) or "-"
+
+    # Try to build vless URI from xui record
+    vless_uri = None
+    if xui and xui.inbound:
+        try:
+            inbound = xui.inbound
+            if inbound.server:
+                raw_sub_link = sub_link
+                if raw_sub_link and raw_sub_link != "-" and "/" in raw_sub_link:
+                    extracted_sub_id = raw_sub_link.rsplit("/", 1)[-1]
+                else:
+                    extracted_sub_id = ""
+                vless_uri = build_vless_uri(
+                    client_uuid=xui.client_uuid,
+                    server=inbound.server,
+                    inbound=inbound,
+                    sub_id=extracted_sub_id,
+                    remark=plan_name,
                 )
+        except Exception as exc:
+            logger.warning("Failed to build vless_uri for sub %s: %s", sub.id, exc)
 
+    # Build message (plain text, no MarkdownV2)
+    lines = [
+        f"📦 پلن: {plan_name}",
+        f"💾 حجم کل: {volume_total}",
+        f"📊 مصرف شده: {volume_used}",
+        f"✅ باقی‌مانده: {volume_remaining}",
+        f"📅 زمان: {ends_label}",
+        f"🔄 وضعیت: {_status_fa(sub.status)}",
+        "",
+        f"🔗 ساب لینک:\n{sub_link}",
+    ]
+    if vless_uri:
+        lines.append(f"\n📋 کانفیگ مستقیم:\n{vless_uri}")
 
-def _escape(text: str) -> str:
-    """Escape special chars for Telegram MarkdownV2."""
-    special = r"\_*[]()~`>#+-=|{}.!"
-    return "".join(f"\\{c}" if c in special else c for c in str(text))
+    text = "\n".join(lines)
+
+    if callback.message is not None:
+        await callback.message.answer(text)
+
+    # Send QR code
+    if vless_uri:
+        qr_bytes = make_qr_bytes(vless_uri)
+        if qr_bytes:
+            await bot.send_photo(
+                chat_id=callback.from_user.id,
+                photo=BufferedInputFile(qr_bytes, filename="config_qr.png"),
+                caption=f"📷 QR کد کانفیگ {plan_name}",
+            )
 
 
 def _status_fa(status: str) -> str:

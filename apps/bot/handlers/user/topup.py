@@ -110,7 +110,6 @@ async def _create_topup_invoice(
     payload = NowPaymentsPaymentCreateRequest(
         price_amount=amount,
         price_currency="usd",
-        pay_currency="usdttrc20",
         order_id=local_order_id,
         order_description=f"Wallet top-up for user {user.id}",
         ipn_callback_url=settings.nowpayments_ipn_callback_url,
@@ -136,7 +135,7 @@ async def _create_topup_invoice(
         provider_invoice_id=str(invoice.id),
         order_id=local_order_id,
         payment_status="waiting",
-        pay_currency="usdttrc20",
+        pay_currency=None,
         price_currency="USD",
         price_amount=amount,
         invoice_url=str(invoice.invoice_url),
