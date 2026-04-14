@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -7,8 +8,10 @@ from sqlalchemy import select
 from core.config import settings
 from core.database import AsyncSessionFactory
 from models.payment import Payment
-from services.nowpayments.client import NowPaymentsClient, NowPaymentsClientConfig
+from services.nowpayments.client import NowPaymentsClient, NowPaymentsClientConfig, NowPaymentsRequestError
 from services.payment import process_successful_payment
+
+logger = logging.getLogger(__name__)
 
 
 async def sync_pending_payments() -> None:
@@ -25,22 +28,41 @@ async def sync_pending_payments() -> None:
             )
         ) as client:
             for payment in payments:
-                if not payment.provider_payment_id:
-                    continue
+                try:
+                    if payment.provider_payment_id:
+                        # We have a payment ID — check status directly
+                        status = await client.get_payment_status(payment.provider_payment_id)
+                    elif payment.provider_invoice_id:
+                        # Direct purchase: we only have invoice_id.
+                        # NowPayments API doesn't have a "get payments by invoice" endpoint,
+                        # so we rely on IPN callback for these.
+                        # But we can try to look up via the invoice endpoint.
+                        # For now, skip — IPN should handle it.
+                        continue
+                    else:
+                        continue
 
-                status = await client.get_payment_status(payment.provider_payment_id)
-                payment.payment_status = status.payment_status
-                if isinstance(payment.callback_payload, dict):
-                    payment.callback_payload = {**payment.callback_payload, "nowpayments_status": status.model_dump(mode="json")}
-                else:
-                    payment.callback_payload = {"nowpayments_status": status.model_dump(mode="json")}
+                    payment.payment_status = status.payment_status
 
-                if status.payment_status in ("finished", "confirmed") and payment.actually_paid is None:
-                    paid_amount = status.actually_paid or status.price_amount
-                    await process_successful_payment(
-                        session=session,
-                        payment=payment,
-                        amount_to_credit=Decimal(str(paid_amount)),
-                    )
+                    # Store the provider_payment_id if we didn't have it
+                    if not payment.provider_payment_id and status.payment_id:
+                        payment.provider_payment_id = str(status.payment_id)
+
+                    if isinstance(payment.callback_payload, dict):
+                        payment.callback_payload = {**payment.callback_payload, "nowpayments_status": status.model_dump(mode="json")}
+                    else:
+                        payment.callback_payload = {"nowpayments_status": status.model_dump(mode="json")}
+
+                    if status.payment_status in ("finished", "confirmed") and payment.actually_paid is None:
+                        paid_amount = status.actually_paid or status.price_amount
+                        await process_successful_payment(
+                            session=session,
+                            payment=payment,
+                            amount_to_credit=Decimal(str(paid_amount)),
+                        )
+                except NowPaymentsRequestError as exc:
+                    logger.warning("Failed to sync payment %s: %s", payment.id, exc)
+                except Exception as exc:
+                    logger.error("Unexpected error syncing payment %s: %s", payment.id, exc, exc_info=True)
 
         await session.commit()

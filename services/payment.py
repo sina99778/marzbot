@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
 from models.payment import Payment
 from models.plan import Plan
-from repositories.user import UserRepository
+from models.user import User
 from services.wallet.manager import WalletManager
 
 logger = logging.getLogger(__name__)
@@ -71,10 +71,22 @@ async def _handle_direct_purchase(
         config_name = purchase_meta.get("config_name", "VPN")
         discount_percent = purchase_meta.get("discount_percent", 0)
 
-        user = await UserRepository(session).get_by_id(payment.user_id)
+        user = await session.get(User, payment.user_id)
         plan = await session.get(Plan, plan_id)
         if not user or not plan:
             logger.error("User or plan not found for direct purchase payment %s", payment.id)
+            return
+
+        # Eagerly load wallet for debit operation
+        from sqlalchemy.orm import selectinload
+        from sqlalchemy import select
+        user = await session.scalar(
+            select(User)
+            .options(selectinload(User.wallet))
+            .where(User.id == payment.user_id)
+        )
+        if not user or not user.wallet:
+            logger.error("User wallet not found for direct purchase payment %s", payment.id)
             return
 
         original_price = plan.price
