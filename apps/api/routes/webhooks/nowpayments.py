@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.dependencies.db import get_db_session
 from core.config import settings
 from models.payment import Payment
-from services.wallet.manager import WalletManager
+from services.payment import process_successful_payment
 
 
 router = APIRouter()
@@ -60,7 +60,10 @@ async def handle_nowpayments_ipn(
         )
 
     payment.payment_status = payment_status
-    payment.callback_payload = payload
+    if isinstance(payment.callback_payload, dict):
+        payment.callback_payload = {**payment.callback_payload, "nowpayments_ipn": payload}
+    else:
+        payment.callback_payload = {"nowpayments_ipn": payload}
 
     if payment_status not in {"finished", "confirmed"}:
         return {"status": "ignored"}
@@ -76,23 +79,10 @@ async def handle_nowpayments_ipn(
             detail="Invalid payment amount in callback payload.",
         )
 
-    payment.actually_paid = amount_to_credit
-
-    wallet_manager = WalletManager(session)
-    await wallet_manager.process_transaction(
-        user_id=payment.user_id,
-        amount=amount_to_credit,
-        transaction_type="deposit",
-        direction="credit",
-        currency=payment.price_currency,
-        reference_type="payment",
-        reference_id=payment.id,
-        description="NOWPayments IPN wallet credit",
-        metadata={
-            "provider": "nowpayments",
-            "provider_payment_id": payment.provider_payment_id,
-            "payment_status": payment_status,
-        },
+    await process_successful_payment(
+        session=session,
+        payment=payment,
+        amount_to_credit=amount_to_credit,
     )
 
     return {"status": "processed"}

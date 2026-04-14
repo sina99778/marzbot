@@ -376,7 +376,6 @@ async def _process_wallet_purchase(
 
     await _finalize_purchase(
         chat_id=callback.from_user.id,
-        message_obj=callback.message,
         bot=bot,
         session=session,
         user=user,
@@ -497,7 +496,6 @@ async def _process_gateway_purchase(
 async def _finalize_purchase(
     *,
     chat_id: int,
-    message_obj,
     bot: Bot,
     session: AsyncSession,
     user,
@@ -535,7 +533,7 @@ async def _finalize_purchase(
         )
     except InsufficientBalanceError:
         order.status = "failed"
-        await message_obj.answer(Messages.BALANCE_NOT_SUFFICIENT_ANYMORE)
+        await bot.send_message(chat_id=chat_id, text=Messages.BALANCE_NOT_SUFFICIENT_ANYMORE)
         return
 
     try:
@@ -566,7 +564,7 @@ async def _finalize_purchase(
                 "CRITICAL: Refund also failed for order %s: %s", order.id, refund_exc
             )
             order.status = "failed_needs_manual_refund"
-        await message_obj.answer(Messages.PROVISIONING_FAILED_REFUNDED)
+        await bot.send_message(chat_id=chat_id, text=Messages.PROVISIONING_FAILED_REFUNDED)
         return
 
     order.status = "provisioned"
@@ -601,7 +599,7 @@ async def _finalize_purchase(
         "📱 *QR Code رو اسکن کن یا کانفیگ بالا رو کپی کن*\n"
         "⚡ ساپورت اپ‌هایی مثل v2rayNG، Hiddify، NekoBox"
     )
-    await message_obj.answer(text, parse_mode="MarkdownV2")
+    await bot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")
 
     # QR Code
     qr_bytes = make_qr_bytes(vless_uri)

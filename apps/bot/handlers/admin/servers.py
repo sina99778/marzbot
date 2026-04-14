@@ -99,10 +99,11 @@ async def list_servers(
 ) -> None:
     await callback.answer()
     page = max(callback_data.page, 1)
-    total_servers = int(await session.scalar(select(func.count()).select_from(XUIServerRecord)) or 0)
+    total_servers = int(await session.scalar(select(func.count()).select_from(XUIServerRecord).where(XUIServerRecord.health_status != "deleted")) or 0)
     result = await session.execute(
         select(XUIServerRecord)
         .options(selectinload(XUIServerRecord.inbounds))
+        .where(XUIServerRecord.health_status != "deleted")
         .order_by(XUIServerRecord.created_at.asc())
         .offset((page - 1) * SERVER_PAGE_SIZE)
         .limit(SERVER_PAGE_SIZE)
@@ -386,6 +387,11 @@ async def delete_server(
         payload=action_payload,
     )
     await session.flush()
+    if active_client_count > 0:
+        await callback.answer(f"سرور با موفقیت بایگانی شد.\n({active_client_count} کاربر فعال روی این سرور وجود دارد و به مرور منقضی می‌شوند)", show_alert=True)
+    else:
+        await callback.answer("سرور به طور کامل حذف شد.", show_alert=True)
+        
     await list_servers(callback, ServerListPageCallback(page=callback_data.page), session)
 
 
@@ -458,11 +464,11 @@ async def server_manage_menu(
         )
 
     builder.button(
-        text="🔙 بازگشت به لیست",
+        text="🔙 لیست سرورها",
         callback_data=ServerListPageCallback(page=callback_data.page).pack(),
     )
     
-    builder.adjust(1)
+    builder.adjust(2, 2, 1, 1)
     await _edit_or_send(callback, text=text, reply_markup=builder.as_markup())
 
 
@@ -615,11 +621,11 @@ def _build_server_list_keyboard(
         if server.health_status == "deleted":
             status_emoji = "🗑"
         builder.button(
-            text=f"🖥 {server.name} | {status_emoji}",
+            text=f"🖥 {server.name} {status_emoji}",
             callback_data=ServerActionCallback(action="manage", server_id=server.id, page=page).pack(),
         )
-    builder.button(text="🔙 بازگشت", callback_data="admin:main")
     builder.adjust(1)
+    builder.button(text="🔙 بازگشت", callback_data="admin:main")
     add_pagination_controls(
         builder,
         page=page,

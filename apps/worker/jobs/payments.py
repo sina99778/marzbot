@@ -8,7 +8,7 @@ from core.config import settings
 from core.database import AsyncSessionFactory
 from models.payment import Payment
 from services.nowpayments.client import NowPaymentsClient, NowPaymentsClientConfig
-from services.wallet.manager import WalletManager
+from services.payment import process_successful_payment
 
 
 async def sync_pending_payments() -> None:
@@ -30,22 +30,17 @@ async def sync_pending_payments() -> None:
 
                 status = await client.get_payment_status(payment.provider_payment_id)
                 payment.payment_status = status.payment_status
-                payment.callback_payload = status.model_dump(mode="json")
+                if isinstance(payment.callback_payload, dict):
+                    payment.callback_payload = {**payment.callback_payload, "nowpayments_status": status.model_dump(mode="json")}
+                else:
+                    payment.callback_payload = {"nowpayments_status": status.model_dump(mode="json")}
 
-                if status.payment_status == "finished" and payment.kind == "wallet_topup" and payment.actually_paid is None:
+                if status.payment_status in ("finished", "confirmed") and payment.actually_paid is None:
                     paid_amount = status.actually_paid or status.price_amount
-                    payment.actually_paid = paid_amount
-                    wallet_manager = WalletManager(session)
-                    await wallet_manager.process_transaction(
-                        user_id=payment.user_id,
-                        amount=Decimal(str(paid_amount)),
-                        transaction_type="deposit",
-                        direction="credit",
-                        currency=payment.price_currency,
-                        reference_type="payment",
-                        reference_id=payment.id,
-                        description="NOWPayments confirmed top-up",
-                        metadata={"provider_payment_id": payment.provider_payment_id},
+                    await process_successful_payment(
+                        session=session,
+                        payment=payment,
+                        amount_to_credit=Decimal(str(paid_amount)),
                     )
 
         await session.commit()
