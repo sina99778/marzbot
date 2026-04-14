@@ -46,7 +46,10 @@ async def my_configs_handler(message: Message, session: AsyncSession) -> None:
 
     result = await session.execute(
         select(Subscription)
-        .options(selectinload(Subscription.plan))
+        .options(
+            selectinload(Subscription.plan),
+            selectinload(Subscription.xui_client),
+        )
         .where(
             Subscription.user_id == user.id,
             Subscription.status.in_(list(_ACTIVE_STATUSES)),
@@ -64,9 +67,9 @@ async def my_configs_handler(message: Message, session: AsyncSession) -> None:
 
     builder = InlineKeyboardBuilder()
     for idx, sub in enumerate(subscriptions, start=1):
-        plan_name = sub.plan.name if sub.plan else "نامشخص"
+        config_name = sub.xui_client.username if sub.xui_client else (sub.plan.name if sub.plan else "نامشخص")
         status_emoji = "✅" if sub.status == "active" else "⏳"
-        label = f"{status_emoji} {plan_name}"
+        label = f"{status_emoji} {config_name}"
 
         # Add remaining time/volume hint
         if sub.ends_at is not None:
@@ -105,7 +108,10 @@ async def my_configs_back_to_list(callback: CallbackQuery, session: AsyncSession
 
     result = await session.execute(
         select(Subscription)
-        .options(selectinload(Subscription.plan))
+        .options(
+            selectinload(Subscription.plan),
+            selectinload(Subscription.xui_client),
+        )
         .where(
             Subscription.user_id == user.id,
             Subscription.status.in_(list(_ACTIVE_STATUSES)),
@@ -121,9 +127,9 @@ async def my_configs_back_to_list(callback: CallbackQuery, session: AsyncSession
 
     builder = InlineKeyboardBuilder()
     for sub in subscriptions:
-        plan_name = sub.plan.name if sub.plan else "نامشخص"
+        config_name = sub.xui_client.username if sub.xui_client else (sub.plan.name if sub.plan else "نامشخص")
         status_emoji = "✅" if sub.status == "active" else "⏳"
-        label = f"{status_emoji} {plan_name}"
+        label = f"{status_emoji} {config_name}"
         if sub.ends_at is not None:
             now = datetime.now(timezone.utc)
             remaining_days = max((sub.ends_at - now).days, 0)
@@ -285,3 +291,9 @@ def _status_fa(status: str) -> str:
         "cancelled": "🚫 لغو شده",
         "refunded": "💰 استرداد شده",
     }.get(status, status)
+
+
+def _escape(text: str) -> str:
+    """Escape special chars for Telegram MarkdownV2."""
+    special = r"\_*[]()~`>#+-=|{}.!"
+    return "".join(f"\\{c}" if c in special else c for c in str(text))

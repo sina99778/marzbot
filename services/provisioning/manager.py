@@ -113,7 +113,9 @@ class ProvisioningManager:
             if active_count >= server.max_clients:
                 raise ProvisioningError("ظرفیت این سرور تکمیل شده است. لطفاً به پشتیبانی اطلاع دهید.")
 
-        client_uuid, username, email, sub_id = await self._generate_unique_client_identity()
+        client_uuid, _username, _email, sub_id = await self._generate_unique_client_identity()
+        # Use config_name as the display name in X-UI panel
+        email = f"{config_name}_{sub_id[:6]}"
         sub_link = build_sub_link(server, sub_id)
         vless_uri = build_vless_uri(
             client_uuid=client_uuid,
@@ -136,10 +138,11 @@ class ProvisioningManager:
         )
 
         logger.info(
-            "Provisioning config: inbound_remote_id=%s, protocol=%s, email=%s",
+            "Provisioning config: inbound_remote_id=%s, protocol=%s, email=%s, config_name=%s",
             inbound.xui_inbound_remote_id,
             inbound.protocol,
             email,
+            config_name,
         )
 
         async with self._get_xui_client_for_server(server) as xui_client:
@@ -168,7 +171,7 @@ class ProvisioningManager:
             xui_client_remote_id=client_uuid,
             email=email,
             client_uuid=client_uuid,
-            username=username,
+            username=config_name,
             sub_link=sub_link,
             usage_bytes=0,
             is_active=True,
