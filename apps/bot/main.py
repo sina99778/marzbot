@@ -10,6 +10,7 @@ from aiogram.client.default import DefaultBotProperties
 from apps.bot.handlers.admin import router as admin_router
 from apps.bot.handlers.user import router as user_router
 from apps.bot.middlewares.database import DatabaseSessionMiddleware
+from apps.bot.middlewares.error_handler import GlobalErrorMiddleware
 from core.config import settings
 from core.database import dispose_database
 
@@ -40,6 +41,8 @@ async def main() -> None:
     )
     dispatcher = Dispatcher()
     dispatcher.update.middleware(DatabaseSessionMiddleware())
+    dispatcher.message.middleware(GlobalErrorMiddleware())
+    dispatcher.callback_query.middleware(GlobalErrorMiddleware())
     dispatcher.include_router(admin_router)
     dispatcher.include_router(user_router)
     dispatcher.startup.register(on_startup)

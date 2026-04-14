@@ -143,18 +143,11 @@ async def skip_discount_code(
     callback: CallbackQuery,
     state: FSMContext,
     session: AsyncSession,
-    bot: Bot,
 ) -> None:
-    """Skip discount and proceed to payment."""
+    """Skip discount and show payment method choice."""
     await callback.answer()
     await state.update_data(discount_code=None, discount_percent=0)
-    try:
-        await _process_purchase(callback, state, session, bot)
-    except Exception as exc:
-        logger.error("Purchase failed: %s", exc, exc_info=True)
-        await state.clear()
-        if callback.message is not None:
-            await callback.message.answer(f"خطا در انجام خرید:\n{exc}")
+    await _show_payment_method_choice(callback, state, session)
 
 
 @router.message(PurchaseStates.waiting_for_discount_code)
@@ -162,9 +155,8 @@ async def discount_code_entered(
     message: Message,
     state: FSMContext,
     session: AsyncSession,
-    bot: Bot,
 ) -> None:
-    """Validate discount code and proceed."""
+    """Validate discount code and show payment method choice."""
     if not message.text:
         return
 
@@ -187,21 +179,143 @@ async def discount_code_entered(
         discount_percent=discount.discount_percent,
         discount_id=str(discount.id),
     )
-    try:
-        await _process_purchase_from_message(message, state, session, bot)
-    except Exception as exc:
-        logger.error("Purchase with discount failed: %s", exc, exc_info=True)
+    await _show_payment_method_choice_msg(message, state, session)
+
+
+async def _show_payment_method_choice(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """Show wallet vs gateway payment options (from callback)."""
+    data = await state.get_data()
+    plan = await session.get(Plan, UUID(data["plan_id"]))
+    if plan is None:
         await state.clear()
-        await message.answer(f"خطا در انجام خرید:\n{exc}")
+        if callback.message:
+            await callback.message.answer(Messages.PLAN_NOT_AVAILABLE)
+        return
+
+    discount_percent = data.get("discount_percent", 0)
+    original_price = plan.price
+    if discount_percent > 0:
+        final_price = (original_price * (Decimal(100 - discount_percent) / Decimal(100))).quantize(Decimal("0.01"))
+    else:
+        final_price = original_price
+
+    discount_line = ""
+    if discount_percent > 0:
+        discount_line = f"🏷 تخفیف: {discount_percent}% (قیمت اصلی: {original_price} {plan.currency})\n"
+
+    text = (
+        "💳 روش پرداخت را انتخاب کنید:\n\n"
+        f"📦 پلن: {plan.name}\n"
+        f"💰 مبلغ قابل پرداخت: {final_price} {plan.currency}\n"
+        f"{discount_line}\n"
+        "از کدام روش پرداخت می‌خواهید استفاده کنید؟"
+    )
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👛 کیف پول", callback_data="purchase:pay:wallet")
+    builder.button(text="💳 درگاه پرداخت (کریپتو)", callback_data="purchase:pay:gateway")
+    builder.button(text=Buttons.BACK, callback_data="purchase:cancel")
+    builder.adjust(1)
+
+    if callback.message:
+        await callback.message.answer(text, reply_markup=builder.as_markup())
 
 
-async def _process_purchase(
+async def _show_payment_method_choice_msg(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """Show wallet vs gateway payment options (from message)."""
+    data = await state.get_data()
+    plan = await session.get(Plan, UUID(data["plan_id"]))
+    if plan is None:
+        await state.clear()
+        await message.answer(Messages.PLAN_NOT_AVAILABLE)
+        return
+
+    discount_percent = data.get("discount_percent", 0)
+    original_price = plan.price
+    if discount_percent > 0:
+        final_price = (original_price * (Decimal(100 - discount_percent) / Decimal(100))).quantize(Decimal("0.01"))
+    else:
+        final_price = original_price
+
+    discount_line = ""
+    if discount_percent > 0:
+        discount_line = f"🏷 تخفیف: {discount_percent}% (قیمت اصلی: {original_price} {plan.currency})\n"
+
+    text = (
+        "💳 روش پرداخت را انتخاب کنید:\n\n"
+        f"📦 پلن: {plan.name}\n"
+        f"💰 مبلغ قابل پرداخت: {final_price} {plan.currency}\n"
+        f"{discount_line}\n"
+        "از کدام روش پرداخت می‌خواهید استفاده کنید؟"
+    )
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👛 کیف پول", callback_data="purchase:pay:wallet")
+    builder.button(text="💳 درگاه پرداخت (کریپتو)", callback_data="purchase:pay:gateway")
+    builder.button(text=Buttons.BACK, callback_data="purchase:cancel")
+    builder.adjust(1)
+
+    await message.answer(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "purchase:cancel")
+async def cancel_purchase(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.clear()
+    if callback.message:
+        await callback.message.answer(Messages.CANCELLED)
+
+
+@router.callback_query(F.data == "purchase:pay:wallet")
+async def pay_with_wallet(
     callback: CallbackQuery,
     state: FSMContext,
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    """Core purchase logic triggered from callback."""
+    """Pay with wallet balance."""
+    await callback.answer()
+    try:
+        await _process_wallet_purchase(callback, state, session, bot)
+    except Exception as exc:
+        logger.error("Wallet purchase failed: %s", exc, exc_info=True)
+        await state.clear()
+        if callback.message is not None:
+            await callback.message.answer(f"خطا در انجام خرید:\n{exc}")
+
+
+@router.callback_query(F.data == "purchase:pay:gateway")
+async def pay_with_gateway(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    """Pay with NowPayments gateway."""
+    await callback.answer()
+    try:
+        await _process_gateway_purchase(callback, state, session)
+    except Exception as exc:
+        logger.error("Gateway purchase failed: %s", exc, exc_info=True)
+        await state.clear()
+        if callback.message is not None:
+            await callback.message.answer(f"خطا در ساخت فاکتور:\n{exc}")
+
+
+async def _process_wallet_purchase(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    """Process purchase using wallet balance."""
     if callback.from_user is None:
         return
 
@@ -259,70 +373,113 @@ async def _process_purchase(
         original_price=original_price,
         discount_percent=discount_percent,
         config_name=config_name,
+        payment_method="wallet",
     )
 
 
-async def _process_purchase_from_message(
-    message: Message,
+async def _process_gateway_purchase(
+    callback: CallbackQuery,
     state: FSMContext,
     session: AsyncSession,
-    bot: Bot,
 ) -> None:
-    """Core purchase logic triggered from message (discount code entry)."""
-    if message.from_user is None:
+    """Create a NowPayments invoice for the purchase amount."""
+    if callback.from_user is None:
         return
 
     data = await state.get_data()
-    await state.clear()
+    # DON'T clear state yet — we need it after payment confirmation via IPN
 
     plan_id = UUID(data["plan_id"])
     config_name = data.get("config_name", "VPN")
     discount_percent = data.get("discount_percent", 0)
-    discount_id = data.get("discount_id")
 
-    user = await UserRepository(session).get_by_telegram_id(message.from_user.id)
+    user = await UserRepository(session).get_by_telegram_id(callback.from_user.id)
     plan = await session.get(Plan, plan_id)
-    if user is None or user.wallet is None or plan is None or not plan.is_active:
-        await message.answer(Messages.PLAN_NOT_AVAILABLE)
+    if user is None or plan is None or not plan.is_active:
+        await state.clear()
+        if callback.message is not None:
+            await callback.message.answer(Messages.PLAN_NOT_AVAILABLE)
         return
 
     original_price = plan.price
     if discount_percent > 0:
-        discounted = original_price * (Decimal(100 - discount_percent) / Decimal(100))
-        final_price = discounted.quantize(Decimal("0.01"))
+        final_price = (original_price * (Decimal(100 - discount_percent) / Decimal(100))).quantize(Decimal("0.01"))
     else:
         final_price = original_price
 
-    if user.wallet.balance < final_price:
-        await message.answer(
-            Messages.INSUFFICIENT_BALANCE.format(
-                balance=f"{user.wallet.balance:.2f}",
-                price=f"{final_price:.2f}",
-                currency=plan.currency,
-            ),
-            reply_markup=build_wallet_topup_keyboard(),
-        )
+    from uuid import uuid4
+    from core.config import settings
+    from models.payment import Payment
+    from schemas.internal.nowpayments import NowPaymentsPaymentCreateRequest
+    from services.nowpayments.client import NowPaymentsClient, NowPaymentsClientConfig, NowPaymentsRequestError
+
+    local_order_id = str(uuid4())
+
+    # Save purchase details in payment metadata so IPN can complete provisioning
+    purchase_meta = {
+        "plan_id": str(plan_id),
+        "config_name": config_name,
+        "discount_percent": discount_percent,
+        "discount_id": data.get("discount_id"),
+        "purpose": "direct_purchase",
+    }
+
+    payload = NowPaymentsPaymentCreateRequest(
+        price_amount=final_price,
+        price_currency="usd",
+        order_id=local_order_id,
+        order_description=f"Purchase plan {plan.name} for user {user.id}",
+        ipn_callback_url=settings.nowpayments_ipn_callback_url,
+    )
+
+    try:
+        async with NowPaymentsClient(
+            NowPaymentsClientConfig(
+                api_key=settings.nowpayments_api_key,
+                base_url=settings.nowpayments_base_url,
+            )
+        ) as client:
+            invoice = await client.create_payment_invoice(payload)
+    except NowPaymentsRequestError:
+        await state.clear()
+        if callback.message is not None:
+            await callback.message.answer(Messages.PAYMENT_GATEWAY_UNAVAILABLE)
         return
 
-    if discount_id:
-        repo = DiscountRepository(session)
-        from models.discount import DiscountCode
-        dc = await session.get(DiscountCode, UUID(discount_id))
-        if dc:
-            await repo.use_code(dc)
-
-    await _finalize_purchase(
-        chat_id=message.from_user.id,
-        message_obj=message,
-        bot=bot,
-        session=session,
-        user=user,
-        plan=plan,
-        final_price=final_price,
-        original_price=original_price,
-        discount_percent=discount_percent,
-        config_name=config_name,
+    payment = Payment(
+        user_id=user.id,
+        provider="nowpayments",
+        kind="direct_purchase",
+        provider_payment_id=None,
+        provider_invoice_id=str(invoice.id),
+        order_id=local_order_id,
+        payment_status="waiting",
+        pay_currency=None,
+        price_currency="USD",
+        price_amount=final_price,
+        invoice_url=str(invoice.invoice_url),
+        callback_payload=purchase_meta,
     )
+    session.add(payment)
+    await session.flush()
+    await state.clear()
+
+    from apps.bot.keyboards.inline import build_topup_link_keyboard
+
+    discount_line = ""
+    if discount_percent > 0:
+        discount_line = f"🏷 تخفیف: {discount_percent}%\n"
+
+    if callback.message is not None:
+        await callback.message.answer(
+            f"🧾 فاکتور خرید ساخته شد:\n\n"
+            f"📦 پلن: {plan.name}\n"
+            f"💰 مبلغ: {final_price} USD\n"
+            f"{discount_line}\n"
+            "بعد از پرداخت و تایید NOWPayments، کانفیگ شما "
+            "به صورت خودکار ساخته و ارسال می‌شود.",
+            reply_markup=build_topup_link_keyboard(str(invoice.invoice_url)),
+        )
 
 
 async def _finalize_purchase(
@@ -337,6 +494,7 @@ async def _finalize_purchase(
     original_price: Decimal,
     discount_percent: int,
     config_name: str,
+    payment_method: str = "wallet",
 ) -> None:
     """Shared purchase finalization: wallet debit, provisioning, sending config."""
     wallet_manager = WalletManager(session)
@@ -410,6 +568,8 @@ async def _finalize_purchase(
     if discount_percent > 0:
         discount_line = f"🏷 تخفیف: *{discount_percent}%* \\(قیمت اصلی: {_escape(str(original_price))}\\)\n"
 
+    payment_label = "کیف پول" if payment_method == "wallet" else "درگاه پرداخت"
+
     text = (
         "✅ *کانفیگ شما آماده است\\!*\n\n"
         f"📛 نام: *{_escape(config_name)}*\n"
@@ -417,6 +577,7 @@ async def _finalize_purchase(
         f"💾 حجم: *{_escape(volume_label)}*\n"
         f"📅 مدت: *{plan.duration_days} روز*\n"
         f"💰 پرداخت شده: *{_escape(str(final_price))} {_escape(plan.currency)}*\n"
+        f"💳 روش پرداخت: *{_escape(payment_label)}*\n"
         f"{discount_line}"
         f"🕐 فعال‌سازی: *از اولین اتصال*\n\n"
         "━━━━━━━━━━━━━━━━\n"
@@ -440,8 +601,25 @@ async def _finalize_purchase(
             parse_mode="MarkdownV2",
         )
 
+    # ── Notify admins about the purchase ──
+    from services.notifications import notify_admins
+
+    admin_text = (
+        "🛒 خرید جدید!\n\n"
+        f"👤 کاربر: {user.first_name or '-'} (ID: {user.telegram_id})\n"
+        f"📦 پلن: {plan.name}\n"
+        f"💰 مبلغ: {final_price} {plan.currency}\n"
+        f"📛 کانفیگ: {config_name}\n"
+        f"💳 روش: {payment_label}"
+    )
+    try:
+        await notify_admins(session, bot, admin_text)
+    except Exception as exc:
+        logger.warning("Failed to notify admins about purchase: %s", exc)
+
 
 def _escape(text: str) -> str:
     """Escape special chars for Telegram MarkdownV2."""
     special = r"\_*[]()~`>#+-=|{}.!"
     return "".join(f"\\{c}" if c in special else c for c in str(text))
+

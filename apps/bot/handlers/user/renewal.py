@@ -249,3 +249,19 @@ async def renew_confirm_payment(
 
     await session.flush()
     await callback.message.edit_text(Messages.RENEWAL_SUCCESS)
+
+    # Notify admins
+    from services.notifications import notify_admins
+    renew_type_label = "حجم" if callback_data.type == "volume" else "زمان"
+    admin_text = (
+        "🔄 تمدید سرویس!\n\n"
+        f"👤 کاربر: {user.first_name or '-'} (ID: {user.telegram_id})\n"
+        f"📦 نوع: {renew_type_label}\n"
+        f"📊 مقدار: {callback_data.amount}\n"
+        f"💰 مبلغ: {price} USD"
+    )
+    try:
+        bot = callback.bot
+        await notify_admins(session, bot, admin_text)
+    except Exception as exc:
+        logger.warning("Failed to notify admins about renewal: %s", exc)
