@@ -173,9 +173,26 @@ async def add_server_password(
             password=password,
         )
     except Exception as exc:
-        await message.answer(f"خطا در اتصال به سرور:\n`{exc}`", parse_mode="MarkdownV2")
-        await state.clear()
-        return
+        if base_url.startswith("http://"):
+            try:
+                base_url = "https://" + base_url[7:]
+                remote_inbounds = await _fetch_remote_inbounds(
+                    base_url=base_url,
+                    username=str(form_data["username"]),
+                    password=password,
+                )
+            except Exception as exc2:
+                err_msg = f"خطا در اتصال به سرور:\n`{exc}`\n\nتلاش با https هم ناموفق بود:\n`{exc2}`"
+                err_msg = err_msg.replace("(", "\\(").replace(")", "\\)").replace(".", "\\.")
+                await message.answer(err_msg, parse_mode="MarkdownV2")
+                await state.clear()
+                return
+        else:
+            err_msg = f"خطا در اتصال به سرور:\n`{exc}`"
+            err_msg = err_msg.replace("(", "\\(").replace(")", "\\)").replace(".", "\\.")
+            await message.answer(err_msg, parse_mode="MarkdownV2")
+            await state.clear()
+            return
 
     server = XUIServerRecord(
         name=str(form_data["name"]),
