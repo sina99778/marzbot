@@ -151,22 +151,36 @@ class SanaeiXUIClient:
         return self._decode_response(response)
 
     async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        try:
-            response = await self._client.request(method, path, **kwargs)
-            response.raise_for_status()
-            return response
-        except httpx.TimeoutException as exc:
-            raise XUIRequestError(f"Timed out while calling X-UI endpoint '{path}'.") from exc
-        except httpx.HTTPStatusError as exc:
-            raise XUIRequestError(
-                f"X-UI request to '{path}' failed with status {exc.response.status_code}: "
-                f"{self._safe_response_text(exc.response)}"
-            ) from exc
-        except httpx.RequestError as exc:
-            cause = f" (caused by {type(exc.__cause__).__name__}: {exc.__cause__})" if exc.__cause__ else ""
-            raise XUIRequestError(
-                f"{type(exc).__name__} while calling X-UI endpoint '{path}'{cause}"
-            ) from exc
+        import asyncio
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await self._client.request(method, path, **kwargs)
+                response.raise_for_status()
+                return response
+            except httpx.TimeoutException as exc:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise XUIRequestError(f"Timed out while calling X-UI endpoint '{path}'.") from exc
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code >= 500 and attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise XUIRequestError(
+                    f"X-UI request to '{path}' failed with status {exc.response.status_code}: "
+                    f"{self._safe_response_text(exc.response)}"
+                ) from exc
+            except httpx.RequestError as exc:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                cause = f" (caused by {type(exc.__cause__).__name__}: {exc.__cause__})" if exc.__cause__ else ""
+                raise XUIRequestError(
+                    f"{type(exc).__name__} while calling X-UI endpoint '{path}'{cause}"
+                ) from exc
+        # Should not reach here
+        raise XUIRequestError(f"All {max_retries} retries exhausted for X-UI endpoint '{path}'.")
 
     @staticmethod
     def _decode_response(response: httpx.Response) -> dict[str, Any] | list[Any] | None:

@@ -152,6 +152,10 @@ async def renew_confirm_payment(
         await callback.message.edit_text("سرویس نامعتبر است.")
         return
 
+    if sub.plan_id is None:
+        await callback.message.edit_text("پلن این سرویس حذف شده. امکان تمدید وجود ندارد.")
+        return
+
     from decimal import Decimal
     price = Decimal(str(callback_data.price))
 
@@ -176,6 +180,9 @@ async def renew_confirm_payment(
     )
     session.add(order)
     await session.flush()
+
+    # Link order to subscription
+    sub.order_id = order.id
 
     # Deduct from wallet using WalletManager
     from services.wallet.manager import WalletManager

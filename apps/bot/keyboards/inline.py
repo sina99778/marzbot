@@ -44,6 +44,7 @@ def build_wallet_topup_keyboard() -> InlineKeyboardMarkup:
 def build_wallet_profile_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=Buttons.TOPUP_CRYPTO, callback_data="wallet:topup")
+    builder.button(text="📊 تاریخچه تراکنش‌ها", callback_data="wallet:history")
     builder.adjust(1)
     return builder.as_markup()
 

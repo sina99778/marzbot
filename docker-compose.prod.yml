@@ -72,6 +72,12 @@ services:
       api:
         condition: service_started
     command: ["python", "-m", "apps.bot.main"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import sys; sys.exit(0)'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   worker:
     image: telegramsellbot:latest
@@ -87,6 +93,12 @@ services:
       api:
         condition: service_started
     command: ["python", "-m", "apps.worker.main"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import sys; sys.exit(0)'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   postgres_data:

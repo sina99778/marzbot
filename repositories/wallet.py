@@ -17,7 +17,6 @@ class WalletRepository(AsyncRepository[Wallet]):
     async def get_by_user_id(self, user_id: UUID) -> Wallet | None:
         query = (
             select(Wallet)
-            .options(selectinload(Wallet.transactions))
             .where(Wallet.user_id == user_id)
         )
         result = await self.session.execute(query)

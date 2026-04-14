@@ -10,6 +10,7 @@ from apps.worker.jobs.broadcast import process_broadcast_queue
 from apps.worker.jobs.payments import sync_pending_payments
 from apps.worker.jobs.retargeting import process_retargeting_campaigns
 from apps.worker.jobs.subscriptions import sync_all_subscription_states
+from apps.worker.jobs.expiry_notifications import send_expiry_notifications
 from core.config import settings
 from core.database import AsyncSessionFactory
 
@@ -38,6 +39,15 @@ async def main() -> None:
         max_instances=1,
         coalesce=True,
     )
+    scheduler.add_job(
+        run_expiry_notifications,
+        "cron",
+        hour="*/6",
+        minute=30,
+        kwargs={"bot": bot},
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
 
     try:
@@ -55,6 +65,12 @@ async def run_broadcast_queue(bot: Bot) -> None:
 async def run_retargeting_campaigns(bot: Bot) -> None:
     async with AsyncSessionFactory() as session:
         await process_retargeting_campaigns(session, bot)
+        await session.commit()
+
+
+async def run_expiry_notifications(bot: Bot) -> None:
+    async with AsyncSessionFactory() as session:
+        await send_expiry_notifications(session, bot)
         await session.commit()
 
 

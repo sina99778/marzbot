@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.keyboards.inline import build_plan_selection_keyboard, build_wallet_topup_keyboard
 from apps.bot.states.purchase import PurchaseStates
-from core.formatting import format_volume_bytes
+from core.formatting import format_volume_bytes, escape_markdown as _escape
 from core.qr import make_qr_bytes
 from core.texts import Buttons, Messages
 from models.order import Order
@@ -295,6 +295,17 @@ async def pay_with_wallet(
 ) -> None:
     """Pay with wallet balance."""
     await callback.answer()
+
+    # Double-click prevention
+    current_state = await state.get_state()
+    if current_state == "purchase_processing":
+        return
+    await state.set_state("purchase_processing")
+
+    # Typing indicator
+    if callback.message:
+        await bot.send_chat_action(callback.from_user.id, "typing")
+
     try:
         await _process_wallet_purchase(callback, state, session, bot)
     except Exception as exc:
@@ -626,10 +637,4 @@ async def _finalize_purchase(
         await notify_admins(session, bot, admin_text)
     except Exception as exc:
         logger.warning("Failed to notify admins about purchase: %s", exc)
-
-
-def _escape(text: str) -> str:
-    """Escape special chars for Telegram MarkdownV2."""
-    special = r"\_*[]()~`>#+-=|{}.!"
-    return "".join(f"\\{c}" if c in special else c for c in str(text))
 

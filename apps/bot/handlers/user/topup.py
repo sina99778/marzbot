@@ -35,14 +35,69 @@ async def wallet_profile_handler(message: Message, session: AsyncSession) -> Non
         await message.answer(Messages.WALLET_NOT_FOUND)
         return
 
+    from repositories.settings import AppSettingsRepository
+    from core.formatting import format_price_with_toman
+    toman_rate = await AppSettingsRepository(session).get_toman_rate()
+    balance_display = format_price_with_toman(user.wallet.balance, toman_rate)
+
     await message.answer(
         Messages.PROFILE_OVERVIEW.format(
             name=user.first_name or "کاربر",
-            balance=f"{user.wallet.balance:.2f}",
+            balance=balance_display,
             credit_limit=f"{user.wallet.credit_limit:.2f}",
         ),
         reply_markup=build_wallet_profile_keyboard(),
     )
+
+
+@router.callback_query(F.data == "wallet:history")
+async def wallet_history_handler(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Show last 10 wallet transactions."""
+    await callback.answer()
+    if callback.from_user is None:
+        return
+
+    user = await UserRepository(session).get_by_telegram_id(callback.from_user.id)
+    if user is None or user.wallet is None:
+        if callback.message:
+            await callback.message.answer(Messages.WALLET_NOT_FOUND)
+        return
+
+    from sqlalchemy import select as sel
+    from models.wallet import WalletTransaction
+
+    result = await session.execute(
+        sel(WalletTransaction)
+        .where(WalletTransaction.wallet_id == user.wallet.id)
+        .order_by(WalletTransaction.created_at.desc())
+        .limit(10)
+    )
+    transactions = list(result.scalars().all())
+
+    if not transactions:
+        if callback.message:
+            await callback.message.answer("📭 هیچ تراکنشی ثبت نشده.")
+        return
+
+    type_labels = {
+        "deposit": "➕ واریز",
+        "purchase": "🛒 خرید",
+        "renewal": "🔄 تمدید",
+        "refund": "💰 بازپرداخت",
+    }
+
+    lines = ["📊 آخرین ۱۰ تراکنش کیف پول:\n"]
+    for tx in transactions:
+        direction_icon = "🟢" if tx.direction == "credit" else "🔴"
+        label = type_labels.get(tx.type, tx.type)
+        dt = tx.created_at.strftime("%Y-%m-%d %H:%M") if tx.created_at else ""
+        lines.append(
+            f"{direction_icon} {label}: {tx.amount:.2f} {tx.currency}\n"
+            f"   موجودی: {tx.balance_after:.2f} | {dt}"
+        )
+
+    if callback.message:
+        await callback.message.answer("\n\n".join(lines))
 
 
 @router.callback_query(F.data == "wallet:topup")

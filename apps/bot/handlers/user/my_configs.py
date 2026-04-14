@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from core.formatting import format_volume_bytes
+from core.formatting import escape_markdown, format_usage_bar, format_volume_bytes
 from core.qr import make_qr_bytes
 from core.texts import Buttons
 from models.subscription import Subscription
@@ -228,22 +228,25 @@ async def my_config_detail_handler(
             logger.warning("Failed to build vless_uri for sub %s: %s", sub.id, exc)
 
     # Build message with MarkdownV2
+    esc = escape_markdown
+    usage_bar = format_usage_bar(sub.used_bytes, sub.volume_bytes)
     lines = [
-        f"📛 *نام کانفیگ*: `{_escape(xui.username if xui else '-')}`",
-        f"📦 *پلن*: `{_escape(plan_name)}`",
-        f"💾 *حجم کل*: `{_escape(volume_total)}`",
-        f"📊 *مصرف شده*: `{_escape(volume_used)}`",
-        f"✅ *باقی‌مانده*: `{_escape(volume_remaining)}`",
-        f"📅 *زمان*: `{_escape(ends_label)}`",
-        f"🔄 *وضعیت*: `{_escape(_status_fa(sub.status))}`",
+        f"📛 *نام کانفیگ*: `{esc(xui.username if xui else '-')}`",
+        f"📦 *پلن*: `{esc(plan_name)}`",
+        f"💾 *حجم کل*: `{esc(volume_total)}`",
+        f"📊 *مصرف شده*: `{esc(volume_used)}`",
+        f"✅ *باقی‌مانده*: `{esc(volume_remaining)}`",
+        f"📶 *مصرف*: `{esc(usage_bar)}`",
+        f"📅 *زمان*: `{esc(ends_label)}`",
+        f"🔄 *وضعیت*: `{esc(_status_fa(sub.status))}`",
         "",
         "🔗 *ساب لینک \\(برای وارد کردن در اپ\\)*:",
-        f"`{_escape(sub_link)}`",
+        f"`{esc(sub_link)}`",
     ]
     if vless_uri:
         lines.append("")
         lines.append("📋 *لینک کانفیگ مستقیم*:")
-        lines.append(f"`{_escape(vless_uri)}`")
+        lines.append(f"`{esc(vless_uri)}`")
 
     text = "\n".join(lines)
 
@@ -299,12 +302,6 @@ def _status_fa(status: str) -> str:
     }.get(status, status)
 
 
-def _escape(text: str) -> str:
-    """Escape special chars for Telegram MarkdownV2."""
-    special = r"\_*[]()~`>#+-=|{}.!"
-    return "".join(f"\\{c}" if c in special else c for c in str(text))
-
-
 # ─── Delete / Cancel+Refund handlers ─────────────────────────────────────────
 
 
@@ -346,8 +343,9 @@ async def cancel_and_refund_config(
             await callback.message.answer("این کانفیگ قابل بازپرداخت نیست (قبلاً استفاده شده).")
         return
 
-    # Delete from X-UI
+    # Delete from X-UI first — only refund if successful
     xui_record = sub.xui_client
+    xui_deleted = True
     if xui_record and xui_record.inbound and xui_record.inbound.server:
         try:
             from services.xui.runtime import create_xui_client_for_server, ensure_inbound_server_loaded
@@ -360,6 +358,12 @@ async def cancel_and_refund_config(
             xui_record.is_active = False
         except Exception as exc:
             logger.error("Failed to delete X-UI client on refund: %s", exc)
+            xui_deleted = False
+
+    if not xui_deleted:
+        if callback.message:
+            await callback.message.answer("❌ خطا در حذف کانفیگ از سرور. لطفاً دوباره تلاش کنید.")
+        return
 
     # Refund to wallet
     from decimal import Decimal

@@ -50,14 +50,25 @@ async def handle_nowpayments_ipn(
             detail="Missing payment_id in NOWPayments callback.",
         )
 
+    # Try by provider_payment_id first, then fallback to order_id
     payment = await session.scalar(
         select(Payment).where(Payment.provider_payment_id == provider_payment_id)
     )
+    if payment is None:
+        # Fallback: look up by order_id from payload
+        order_id_from_payload = str(payload.get("order_id", "")).strip()
+        if order_id_from_payload:
+            payment = await session.scalar(
+                select(Payment).where(Payment.order_id == order_id_from_payload)
+            )
     if payment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Payment not found.",
         )
+    # Store provider_payment_id for future lookups
+    if not payment.provider_payment_id:
+        payment.provider_payment_id = provider_payment_id
 
     payment.payment_status = payment_status
     if isinstance(payment.callback_payload, dict):
@@ -107,7 +118,7 @@ def _is_valid_nowpayments_signature(*, raw_body: bytes, signature: str | None) -
     except (UnicodeDecodeError, json.JSONDecodeError):
         return False
 
-    expected_signature = hmac.new(
+    expected_signature = hmac.HMAC(
         key=settings.nowpayments_ipn_secret.get_secret_value().encode("utf-8"),
         msg=canonical_body,
         digestmod=hashlib.sha512,
