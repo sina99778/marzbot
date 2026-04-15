@@ -155,12 +155,15 @@ class SanaeiXUIClient:
         else:
             payload = response
 
+        # Handle null/empty response (new client with no traffic yet)
+        if payload is None:
+            return XUIClientTraffic(email=email, up=0, down=0)
         if isinstance(payload, list):
             if not payload:
-                raise XUIRequestError(f"No traffic stats found for client '{email}'.")
+                return XUIClientTraffic(email=email, up=0, down=0)
             payload = payload[0]
         if not isinstance(payload, dict):
-            raise XUIRequestError("Unexpected traffic payload returned by X-UI.")
+            return XUIClientTraffic(email=email, up=0, down=0)
         return XUIClientTraffic.model_validate(payload)
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any] | list[Any] | None:
