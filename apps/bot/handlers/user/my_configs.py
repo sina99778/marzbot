@@ -16,7 +16,7 @@ from core.formatting import escape_markdown, format_usage_bar, format_volume_byt
 from core.qr import make_qr_bytes
 from core.texts import Buttons
 from models.subscription import Subscription
-from models.xui import XUIClientRecord, XUIInboundRecord
+from models.xui import XUIClientRecord, XUIInboundRecord, XUIServerRecord
 from repositories.user import UserRepository
 from services.xui.runtime import build_vless_uri
 
@@ -68,7 +68,7 @@ async def my_configs_handler(message: Message, session: AsyncSession) -> None:
     builder = InlineKeyboardBuilder()
     for idx, sub in enumerate(subscriptions, start=1):
         config_name = sub.xui_client.username if sub.xui_client else (sub.plan.name if sub.plan else "نامشخص")
-        status_emoji = "✅" if sub.status == "active" else "⏳"
+        status_emoji = {"active": "✅", "pending_activation": "⏳", "expired": "❌"}.get(sub.status, "❓")
         label = f"{status_emoji} {config_name}"
 
         # Add remaining time/volume hint
@@ -372,13 +372,30 @@ async def refresh_usage_handler(
     usage_bar = format_usage_bar(usage["used_bytes"], usage["total_bytes"])
 
     config_name = sub.xui_client.username if sub.xui_client else "نامشخص"
+    
+    # Show time remaining if activated
+    time_info = ""
+    if sub.ends_at is not None:
+        now = datetime.now(timezone.utc)
+        remaining_days = max((sub.ends_at - now).days, 0)
+        remaining_hours = max(int((sub.ends_at - now).total_seconds() / 3600), 0)
+        if remaining_days > 0:
+            time_info = f"\n📅 زمان باقی‌مانده: {remaining_days} روز"
+        else:
+            time_info = f"\n📅 زمان باقی‌مانده: {remaining_hours} ساعت"
+    elif sub.status == "pending_activation":
+        time_info = "\n📅 هنوز فعال نشده (از اولین اتصال شروع می‌شود)"
+    
+    status_text = _status_fa(sub.status)
 
     text = (
         f"📊 وضعیت لحظه‌ای کانفیگ «{config_name}»\n\n"
+        f"🔄 وضعیت: {status_text}\n"
         f"💾 حجم کل: {total}\n"
         f"📤 مصرف شده: {used}\n"
         f"✅ باقی‌مانده: {remaining}\n"
         f"📶 {usage_bar}"
+        f"{time_info}"
     )
 
     if callback.message:
@@ -410,7 +427,8 @@ async def reset_uuid_handler(
             selectinload(Subscription.plan),
             selectinload(Subscription.xui_client)
             .selectinload(XUIClientRecord.inbound)
-            .selectinload(XUIInboundRecord.server),
+            .selectinload(XUIInboundRecord.server)
+            .selectinload(XUIServerRecord.credentials),
         )
         .where(
             Subscription.id == callback_data.subscription_id,
@@ -434,12 +452,16 @@ async def reset_uuid_handler(
             await callback.message.answer("❌ سرور خاموش یا حذف شده است.")
         return
 
-    import uuid
+    import uuid as uuid_mod
     from schemas.internal.xui import XUIClient
-    from services.xui.runtime import create_xui_client_for_server, ensure_inbound_server_loaded
+    from services.xui.runtime import create_xui_client_for_server, ensure_inbound_server_loaded, build_sub_link
     
-    new_uuid = str(uuid.uuid4())
+    new_uuid = str(uuid_mod.uuid4())
+    new_sub_id = uuid_mod.uuid4().hex[:16]  # Generate a proper new subId
     expiry_ms = int(sub.ends_at.timestamp() * 1000) if sub.ends_at else 0
+
+    # Extract old subId from existing sub_link if possible
+    old_sub_link = sub.sub_link or xui_record.sub_link or ""
 
     updated_client = XUIClient(
         id=xui_record.xui_client_remote_id or xui_record.client_uuid,
@@ -449,6 +471,7 @@ async def reset_uuid_handler(
         totalGB=sub.volume_bytes,
         expiryTime=expiry_ms,
         enable=xui_record.is_active,
+        subId=new_sub_id,
         comment=xui_record.username or "",
     )
 
@@ -460,23 +483,47 @@ async def reset_uuid_handler(
                 client_id=xui_record.xui_client_remote_id or xui_record.client_uuid,
                 client=updated_client,
             )
-        xui_record.client_uuid = new_uuid
         
-        # We must regenerate the sub_link if it contains the old sub_id
-        if sub.sub_link and "/" in sub.sub_link:
-            from services.xui.runtime import build_sub_link
-            new_sub_id = new_uuid.replace("-", "")[:24]
-            sub.sub_link = build_sub_link(server, new_sub_id)
-            xui_record.sub_link = sub.sub_link
+        # Update local records
+        xui_record.client_uuid = new_uuid
+        new_sub_link = build_sub_link(server, new_sub_id)
+        sub.sub_link = new_sub_link
+        xui_record.sub_link = new_sub_link
             
         await session.flush()
         
+        # Build new vless URI
+        try:
+            new_vless = build_vless_uri(
+                client_uuid=new_uuid,
+                server=xui_record.inbound.server,
+                inbound=xui_record.inbound,
+                sub_id=new_sub_id,
+                remark=xui_record.username or "VPN",
+            )
+        except Exception:
+            new_vless = None
+
+        # Send new config info to user
+        response_lines = [
+            "✅ لینک کانفیگ شما با موفقیت تغییر کرد!\n",
+            f"🔗 ساب لینک جدید:\n`{escape_markdown(new_sub_link)}`",
+        ]
+        if new_vless:
+            response_lines.append(f"\n📋 لینک مستقیم جدید:\n`{escape_markdown(new_vless)}`")
+        response_lines.append("\n⚠️ لینک‌های قبلی دیگر کار نمی‌کنند.")
+
         if callback.message:
-            await callback.message.answer("✅ لینک کانفیگ شما تغییر کرد. از لیست کانفیگ‌ها مجدداً وارد شوید.")
             try:
-                await callback.message.delete()
+                await callback.message.edit_text(
+                    "\n".join(response_lines),
+                    parse_mode="MarkdownV2",
+                )
             except Exception:
-                pass
+                await callback.message.answer(
+                    "\n".join(response_lines),
+                    parse_mode="MarkdownV2",
+                )
     except Exception as exc:
         logger.error("Failed to reset UUID for sub %s: %s", sub.id, exc)
         if callback.message:
@@ -504,7 +551,8 @@ async def toggle_enable_handler(
             selectinload(Subscription.plan),
             selectinload(Subscription.xui_client)
             .selectinload(XUIClientRecord.inbound)
-            .selectinload(XUIInboundRecord.server),
+            .selectinload(XUIInboundRecord.server)
+            .selectinload(XUIServerRecord.credentials),
         )
         .where(
             Subscription.id == callback_data.subscription_id,
@@ -534,6 +582,12 @@ async def toggle_enable_handler(
     new_enable_status = not xui_record.is_active
     expiry_ms = int(sub.ends_at.timestamp() * 1000) if sub.ends_at else 0
 
+    # Extract existing subId from sub_link to preserve it during update
+    existing_sub_id = ""
+    current_sub_link = sub.sub_link or xui_record.sub_link or ""
+    if current_sub_link and "/" in current_sub_link:
+        existing_sub_id = current_sub_link.rsplit("/", 1)[-1]
+
     updated_client = XUIClient(
         id=xui_record.xui_client_remote_id or xui_record.client_uuid,
         uuid=xui_record.client_uuid,
@@ -542,6 +596,7 @@ async def toggle_enable_handler(
         totalGB=sub.volume_bytes,
         expiryTime=expiry_ms,
         enable=new_enable_status,
+        subId=existing_sub_id,
         comment=xui_record.username or "",
     )
 

@@ -141,6 +141,12 @@ async def _reset_client_uuid(
 
     new_uuid = str(uuid4())
 
+    # Extract existing subId from sub_link
+    existing_sub_id = ""
+    current_sub_link = subscription.sub_link or (xui_record.sub_link if xui_record else "") or ""
+    if current_sub_link and "/" in current_sub_link:
+        existing_sub_id = current_sub_link.rsplit("/", 1)[-1]
+
     expiry_ms = int(subscription.ends_at.timestamp() * 1000) if subscription.ends_at is not None else 0
     updated_client = XUIClient(
         id=xui_record.xui_client_remote_id or xui_record.client_uuid,
@@ -150,6 +156,7 @@ async def _reset_client_uuid(
         totalGB=subscription.volume_bytes,
         expiryTime=expiry_ms,
         enable=False,
+        subId=existing_sub_id,
         comment=f"uuid_reset:{subscription.id}",
     )
     try:
@@ -172,6 +179,13 @@ async def _disable_client_in_xui(
         return
 
     expiry_ms = int(subscription.ends_at.timestamp() * 1000) if subscription.ends_at is not None else 0
+
+    # Extract existing subId from sub_link
+    existing_sub_id = ""
+    current_sub_link = subscription.sub_link or (xui_record.sub_link if xui_record else "") or ""
+    if current_sub_link and "/" in current_sub_link:
+        existing_sub_id = current_sub_link.rsplit("/", 1)[-1]
+
     disabled_client = XUIClient(
         id=xui_record.xui_client_remote_id or xui_record.client_uuid,
         uuid=xui_record.client_uuid,
@@ -180,6 +194,7 @@ async def _disable_client_in_xui(
         totalGB=subscription.volume_bytes,
         expiryTime=expiry_ms,
         enable=False,
+        subId=existing_sub_id,
         comment=f"expired:{subscription.id}",
     )
     try:
