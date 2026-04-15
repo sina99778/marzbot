@@ -266,4 +266,4 @@ async def get_realtime_usage(session: AsyncSession, subscription: Subscription) 
             }
     except Exception as exc:
         logger.error("[REALTIME] Failed to fetch for email='%s': %s", xui_record.email, exc, exc_info=True)
-        return None
+        raise

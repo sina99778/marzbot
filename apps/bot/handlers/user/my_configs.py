@@ -198,14 +198,15 @@ async def my_config_detail_handler(
 
     # ── Fetch real-time usage from X-UI panel ──
     realtime_ok = False
+    realtime_error = ""
     try:
         from apps.worker.jobs.subscriptions import get_realtime_usage
         usage = await get_realtime_usage(session, sub)
         if usage is not None:
             realtime_ok = True
-        # get_realtime_usage directly updates sub.used_bytes, sub.status, sub.ends_at etc.
     except Exception as exc:
         logger.error("Failed to fetch realtime usage for sub %s: %s", sub.id, exc, exc_info=True)
+        realtime_error = str(exc)[:100]
 
     volume_total = format_volume_bytes(sub.volume_bytes)
     volume_used = format_volume_bytes(sub.used_bytes)
@@ -251,7 +252,12 @@ async def my_config_detail_handler(
     # Build message with MarkdownV2
     esc = escape_markdown
     usage_bar = format_usage_bar(sub.used_bytes, sub.volume_bytes)
-    sync_label = "✅ لحظه‌ای" if realtime_ok else "⚠️ آفلاین \\(اطلاعات قبلی\\)"
+    if realtime_ok:
+        sync_label = "✅ لحظه‌ای"
+    elif realtime_error:
+        sync_label = f"❌ خطا: {esc(realtime_error)}"
+    else:
+        sync_label = "⚠️ آفلاین"
     lines = [
         f"📛 *نام کانفیگ*: `{esc(xui.username if xui else '-')}`",
         f"📦 *پلن*: `{esc(plan_name)}`",
@@ -379,7 +385,13 @@ async def refresh_usage_handler(
         return
 
     from apps.worker.jobs.subscriptions import get_realtime_usage
-    usage = await get_realtime_usage(session, sub)
+    try:
+        usage = await get_realtime_usage(session, sub)
+    except Exception as exc:
+        logger.error("refresh_usage failed: %s", exc, exc_info=True)
+        if callback.message:
+            await callback.message.answer(f"❌ خطا: {str(exc)[:200]}")
+        return
 
     if usage is None:
         if callback.message:
