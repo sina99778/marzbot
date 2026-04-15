@@ -451,6 +451,14 @@ async def server_manage_menu(
             callback_data=ServerActionCallback(action="toggle", server_id=server.id, page=callback_data.page).pack(),
         )
         builder.button(
+            text="✏️ ویرایش آدرس سرور",
+            callback_data=ServerActionCallback(action="edit_url", server_id=server.id, page=callback_data.page).pack(),
+        )
+        builder.button(
+            text="🔑 ویرایش اعتبارنامه",
+            callback_data=ServerActionCallback(action="edit_creds", server_id=server.id, page=callback_data.page).pack(),
+        )
+        builder.button(
             text="🌐 تنظیم دامنه‌ها",
             callback_data=ServerActionCallback(action="edit_domain", server_id=server.id, page=callback_data.page).pack(),
         )
@@ -468,7 +476,7 @@ async def server_manage_menu(
         callback_data=ServerListPageCallback(page=callback_data.page).pack(),
     )
     
-    builder.adjust(2, 2, 1, 1)
+    builder.adjust(2, 2, 2, 1, 1)
     await _edit_or_send(callback, text=text, reply_markup=builder.as_markup())
 
 
@@ -606,6 +614,199 @@ async def _save_limit(message: Message, state: FSMContext, session: AsyncSession
         
     await message.answer(
         f"✅ محدودیت کاربر سرور روی {limit if limit is not None else 'نامحدود'} تنظیم شد."
+    )
+
+
+# ─── Edit Server URL ──────────────────────────────────────────────────────────
+
+
+@router.callback_query(ServerActionCallback.filter(F.action == "edit_url"))
+async def edit_url_start(
+    callback: CallbackQuery,
+    callback_data: ServerActionCallback,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    server = await session.get(XUIServerRecord, callback_data.server_id)
+    if server is None:
+        await callback.message.answer(AdminMessages.SERVER_NOT_FOUND)
+        return
+
+    await state.update_data(server_id=str(callback_data.server_id), page=callback_data.page)
+    await state.set_state(ServerManageStates.waiting_for_new_base_url)
+    await callback.message.answer(
+        f"آدرس فعلی سرور:\n`{server.base_url}`\n\n"
+        "آدرس جدید سرور (به همراه پورت) را وارد کنید:\n"
+        "مثلاً: http://1.2.3.4:54321 یا https://panel.example.com:2053",
+        parse_mode="Markdown",
+    )
+
+
+@router.message(ServerManageStates.waiting_for_new_base_url)
+async def edit_url_receive(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    admin_user: User,
+) -> None:
+    if not message.text:
+        return
+
+    new_url = message.text.strip().rstrip("/")
+    data = await state.get_data()
+    server_id = UUID(data["server_id"])
+
+    server = await session.scalar(
+        select(XUIServerRecord)
+        .options(selectinload(XUIServerRecord.credentials))
+        .where(XUIServerRecord.id == server_id)
+    )
+    if server is None or server.credentials is None:
+        await state.clear()
+        await message.answer(AdminMessages.SERVER_NOT_FOUND)
+        return
+
+    # Test connection with the new URL
+    password = decrypt_secret(server.credentials.password_encrypted)
+    try:
+        await _fetch_remote_inbounds(
+            base_url=new_url,
+            username=server.credentials.username,
+            password=password,
+        )
+    except Exception as exc:
+        await message.answer(
+            f"❌ اتصال به آدرس جدید ناموفق بود:\n{exc}\n\nلطفاً آدرس صحیح را وارد کنید."
+        )
+        return
+
+    old_url = server.base_url
+    server.base_url = new_url
+    await session.flush()
+
+    await AuditLogRepository(session).log_action(
+        actor_user_id=admin_user.id,
+        action="edit_server_url",
+        entity_type="server",
+        entity_id=server.id,
+        payload={"old_url": old_url, "new_url": new_url},
+    )
+
+    await state.clear()
+    await message.answer(
+        f"✅ آدرس سرور «{server.name}» عوض شد.\n\n"
+        f"قبلی: {old_url}\n"
+        f"جدید: {new_url}"
+    )
+
+
+# ─── Edit Server Credentials ──────────────────────────────────────────────────
+
+
+@router.callback_query(ServerActionCallback.filter(F.action == "edit_creds"))
+async def edit_creds_start(
+    callback: CallbackQuery,
+    callback_data: ServerActionCallback,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    server = await session.scalar(
+        select(XUIServerRecord)
+        .options(selectinload(XUIServerRecord.credentials))
+        .where(XUIServerRecord.id == callback_data.server_id)
+    )
+    if server is None:
+        await callback.message.answer(AdminMessages.SERVER_NOT_FOUND)
+        return
+
+    current_username = server.credentials.username if server.credentials else "-"
+    await state.update_data(server_id=str(callback_data.server_id), page=callback_data.page)
+    await state.set_state(ServerManageStates.waiting_for_new_username)
+    await callback.message.answer(
+        f"یوزرنیم فعلی: `{current_username}`\n\n"
+        "یوزرنیم جدید پنل X-UI را وارد کنید:",
+        parse_mode="Markdown",
+    )
+
+
+@router.message(ServerManageStates.waiting_for_new_username)
+async def edit_creds_username(message: Message, state: FSMContext) -> None:
+    if not message.text:
+        return
+    await state.update_data(new_username=message.text.strip())
+    await state.set_state(ServerManageStates.waiting_for_new_password)
+    await message.answer("رمز عبور جدید پنل X-UI را وارد کنید:")
+
+
+@router.message(ServerManageStates.waiting_for_new_password)
+async def edit_creds_password(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    admin_user: User,
+) -> None:
+    if not message.text:
+        return
+
+    new_password = message.text.strip()
+    data = await state.get_data()
+    server_id = UUID(data["server_id"])
+    new_username = data["new_username"]
+
+    server = await session.scalar(
+        select(XUIServerRecord)
+        .options(selectinload(XUIServerRecord.credentials))
+        .where(XUIServerRecord.id == server_id)
+    )
+    if server is None:
+        await state.clear()
+        await message.answer(AdminMessages.SERVER_NOT_FOUND)
+        return
+
+    # Test connection with new credentials
+    try:
+        await _fetch_remote_inbounds(
+            base_url=server.base_url,
+            username=new_username,
+            password=new_password,
+        )
+    except Exception as exc:
+        await message.answer(
+            f"❌ ورود با اعتبارنامه جدید ناموفق بود:\n{exc}\n\n"
+            "لطفاً یوزرنیم و رمز عبور صحیح را وارد کنید."
+        )
+        await state.set_state(ServerManageStates.waiting_for_new_username)
+        await message.answer("یوزرنیم جدید را دوباره وارد کنید:")
+        return
+
+    if server.credentials:
+        server.credentials.username = new_username
+        server.credentials.password_encrypted = encrypt_secret(new_password)
+    else:
+        cred = XUIServerCredential(
+            server_id=server.id,
+            username=new_username,
+            password_encrypted=encrypt_secret(new_password),
+        )
+        session.add(cred)
+
+    await session.flush()
+
+    await AuditLogRepository(session).log_action(
+        actor_user_id=admin_user.id,
+        action="edit_server_credentials",
+        entity_type="server",
+        entity_id=server.id,
+        payload={"new_username": new_username},
+    )
+
+    await state.clear()
+    await message.answer(
+        f"✅ اعتبارنامه سرور «{server.name}» بروزرسانی شد.\n\n"
+        f"یوزرنیم: {new_username}\n"
+        "رمز عبور: ••••••••"
     )
 
 

@@ -12,6 +12,9 @@ class ServerManageStates(StatesGroup):
     waiting_for_config_domain = State()
     waiting_for_sub_domain = State()
     waiting_for_max_clients = State()
+    waiting_for_new_base_url = State()
+    waiting_for_new_username = State()
+    waiting_for_new_password = State()
 
 
 class CreatePlanStates(StatesGroup):
