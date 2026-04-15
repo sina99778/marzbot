@@ -211,7 +211,16 @@ async def get_realtime_usage(session: AsyncSession, subscription: Subscription) 
     """Fetch real-time usage from X-UI panel for a single subscription."""
     xui_record = subscription.xui_client
     if xui_record is None or xui_record.inbound_id is None:
+        logger.warning("[REALTIME] No xui_record or inbound_id for sub %s", subscription.id)
         return None
+
+    # Ensure plan is loaded (needed for auto-activation duration)
+    if subscription.plan is None:
+        from models.plan import Plan
+        plan = await session.get(Plan, subscription.plan_id)
+        # Attach to subscription manually
+    else:
+        plan = subscription.plan
 
     inbound = await session.scalar(
         select(XUIInboundRecord)
@@ -222,12 +231,15 @@ async def get_realtime_usage(session: AsyncSession, subscription: Subscription) 
         .where(XUIInboundRecord.id == xui_record.inbound_id)
     )
     if inbound is None or inbound.server is None or inbound.server.credentials is None:
+        logger.warning("[REALTIME] Inbound/server/credentials missing for sub %s (inbound_id=%s)", subscription.id, xui_record.inbound_id)
         return None
 
     try:
         server = ensure_inbound_server_loaded(inbound)
+        logger.info("[REALTIME] Fetching traffic for email='%s' from server '%s'", xui_record.email, server.name)
         async with create_xui_client_for_server(server) as xui_client:
             traffic = await xui_client.get_client_traffic(xui_record.email)
+            logger.info("[REALTIME] Traffic result: up=%d, down=%d, used=%d", traffic.up, traffic.down, traffic.used_bytes)
 
             # Update local records
             subscription.used_bytes = traffic.used_bytes
@@ -238,11 +250,12 @@ async def get_realtime_usage(session: AsyncSession, subscription: Subscription) 
             if subscription.status == "pending_activation" and traffic.used_bytes > 0:
                 from datetime import timedelta
                 now = utcnow()
-                plan_duration = subscription.plan.duration_days if subscription.plan else DEFAULT_PLAN_DURATION_DAYS
+                plan_duration = plan.duration_days if plan else DEFAULT_PLAN_DURATION_DAYS
                 subscription.status = "active"
                 subscription.activated_at = now
                 subscription.starts_at = now
                 subscription.ends_at = now + timedelta(days=plan_duration)
+                logger.info("[REALTIME] Auto-activated sub %s — ends_at=%s", subscription.id, subscription.ends_at)
 
             await session.flush()
 
@@ -251,6 +264,6 @@ async def get_realtime_usage(session: AsyncSession, subscription: Subscription) 
                 "total_bytes": subscription.volume_bytes,
                 "remaining_bytes": max(subscription.volume_bytes - traffic.used_bytes, 0),
             }
-    except XUIClientError as exc:
-        logger.warning("Failed to fetch realtime usage for '%s': %s", xui_record.email, exc)
+    except Exception as exc:
+        logger.error("[REALTIME] Failed to fetch for email='%s': %s", xui_record.email, exc, exc_info=True)
         return None

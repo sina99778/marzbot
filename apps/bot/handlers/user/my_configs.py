@@ -197,13 +197,15 @@ async def my_config_detail_handler(
     config_name = xui.username if xui else plan_name
 
     # ── Fetch real-time usage from X-UI panel ──
+    realtime_ok = False
     try:
         from apps.worker.jobs.subscriptions import get_realtime_usage
         usage = await get_realtime_usage(session, sub)
+        if usage is not None:
+            realtime_ok = True
         # get_realtime_usage directly updates sub.used_bytes, sub.status, sub.ends_at etc.
-        # No need to refresh - the object is already mutated in memory
     except Exception as exc:
-        logger.warning("Failed to fetch realtime usage for sub %s: %s", sub.id, exc)
+        logger.error("Failed to fetch realtime usage for sub %s: %s", sub.id, exc, exc_info=True)
 
     volume_total = format_volume_bytes(sub.volume_bytes)
     volume_used = format_volume_bytes(sub.used_bytes)
@@ -249,6 +251,7 @@ async def my_config_detail_handler(
     # Build message with MarkdownV2
     esc = escape_markdown
     usage_bar = format_usage_bar(sub.used_bytes, sub.volume_bytes)
+    sync_label = "✅ لحظه‌ای" if realtime_ok else "⚠️ آفلاین \\(اطلاعات قبلی\\)"
     lines = [
         f"📛 *نام کانفیگ*: `{esc(xui.username if xui else '-')}`",
         f"📦 *پلن*: `{esc(plan_name)}`",
@@ -258,6 +261,7 @@ async def my_config_detail_handler(
         f"📶 *مصرف*: `{esc(usage_bar)}`",
         f"📅 *زمان*: `{esc(ends_label)}`",
         f"🔄 *وضعیت*: `{esc(_status_fa(sub.status))}`",
+        f"📡 *سینک*: {sync_label}",
         "",
         "🔗 *ساب لینک \\(برای وارد کردن در اپ\\)*:",
         f"`{esc(sub_link)}`",
