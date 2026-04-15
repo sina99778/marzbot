@@ -160,12 +160,15 @@ async def revoke_user_config(
 
     xui_record = subscription.xui_client
     if xui_record is not None and xui_record.inbound is not None:
-        server = ensure_inbound_server_loaded(xui_record.inbound)
-        async with create_xui_client_for_server(server) as xui_client:
-            await xui_client.delete_client(
-                inbound_id=xui_record.inbound.xui_inbound_remote_id,
-                client_id=xui_record.xui_client_remote_id or xui_record.client_uuid,
-            )
+        try:
+            server = ensure_inbound_server_loaded(xui_record.inbound)
+            async with create_xui_client_for_server(server) as xui_client:
+                await xui_client.delete_client(
+                    inbound_id=xui_record.inbound.xui_inbound_remote_id,
+                    client_id=xui_record.xui_client_remote_id or xui_record.client_uuid,
+                )
+        except Exception as exc:
+            logger.error("Failed to delete X-UI client on admin revoke: %s", exc)
         xui_record.is_active = False
 
     subscription.status = "cancelled"

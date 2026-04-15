@@ -780,7 +780,8 @@ async def delete_expired_config(
         .options(
             selectinload(Subscription.xui_client)
             .selectinload(XUIClientRecord.inbound)
-            .selectinload(XUIInboundRecord.server),
+            .selectinload(XUIInboundRecord.server)
+            .selectinload(XUIServerRecord.credentials),
         )
         .where(
             Subscription.id == callback_data.subscription_id,

@@ -238,13 +238,22 @@ async def renew_confirm_payment(
                     if sub.ends_at:
                         expiry_time = int(sub.ends_at.timestamp() * 1000)
 
+                    # Extract subId from sub_link
+                    existing_sub_id = ""
+                    current_sub_link = sub.sub_link or (xui_full.sub_link if xui_full else "") or ""
+                    if current_sub_link and "/" in current_sub_link:
+                        existing_sub_id = current_sub_link.rsplit("/", 1)[-1]
+
                     xui_c = XUIClient(
                         id=xui_full.client_uuid,
                         uuid=xui_full.client_uuid,
                         email=xui_full.email,
                         enable=True,
+                        limitIp=1,
                         totalGB=sub.volume_bytes,
                         expiryTime=expiry_time,
+                        subId=existing_sub_id,
+                        comment=xui_full.username or "",
                     )
                     await client.update_client(
                         inbound_id=xui_full.inbound.xui_inbound_remote_id,
