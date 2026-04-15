@@ -40,7 +40,10 @@ async def start_command_handler(message: Message, session: AsyncSession) -> None
     else:
         welcome_text = Messages.WELCOME_BACK.format(name=welcome_name)
 
+    from core.config import settings
+    is_admin = user.role in {"admin", "owner"} or telegram_user.id == settings.owner_telegram_id
+
     await message.answer(
         welcome_text,
-        reply_markup=get_main_menu_keyboard(),
+        reply_markup=get_main_menu_keyboard(is_admin=is_admin),
     )

@@ -263,14 +263,24 @@ async def my_config_detail_handler(
     if sub.status in ("active", "pending_activation") and not server_deleted:
         builder.button(text="📊 بروزرسانی حجم", callback_data=MyConfigCallback(action="refresh_usage", subscription_id=sub.id).pack())
         builder.button(text=Buttons.RENEW_SERVICE, callback_data=MyConfigCallback(action="renew", subscription_id=sub.id).pack())
+        
+        # New Feature: Change Link / Reset UUID
+        builder.button(text="🔄 تغییر لینک", callback_data=MyConfigCallback(action="reset_uuid", subscription_id=sub.id).pack())
+        
+        # New Feature: Toggle enable status
+        is_enabled = xui.is_active if xui else False
+        toggle_text = "🔴 خاموش کردن" if is_enabled else "🟢 روشن کردن"
+        builder.button(text=toggle_text, callback_data=MyConfigCallback(action="toggle_enable", subscription_id=sub.id).pack())
+
     # Cancel & refund for unused configs OR configs with deleted server
     if sub.status == "pending_activation" and sub.used_bytes == 0:
         builder.button(text="🔄 لغو و بازپرداخت", callback_data=MyConfigCallback(action="cancel_refund", subscription_id=sub.id).pack())
     # Delete: expired configs OR configs with deleted/missing server
     if sub.status == "expired" or server_deleted:
         builder.button(text="🗑 حذف کانفیگ", callback_data=MyConfigCallback(action="delete", subscription_id=sub.id).pack())
+        
     builder.button(text=Buttons.BACK, callback_data="myconfig:back_to_list")
-    builder.adjust(2, 1, 1)
+    builder.adjust(2, 2, 1, 1)
 
     # If QR code is available, send photo with text as caption
     if vless_uri:
@@ -372,7 +382,186 @@ async def refresh_usage_handler(
         await callback.message.answer(text)
 
 
-# ─── Delete / Cancel+Refund handlers ─────────────────────────────────────────
+
+# ─── Config Actions (Reset UUID / Toggle Enable) ─────────────────────────────
+
+
+@router.callback_query(MyConfigCallback.filter(F.action == "reset_uuid"))
+async def reset_uuid_handler(
+    callback: CallbackQuery,
+    callback_data: MyConfigCallback,
+    session: AsyncSession,
+) -> None:
+    """Change the UUID of a config and update the panel."""
+    await callback.answer("🔄 در حال تغییر لینک...")
+    if callback.from_user is None:
+        return
+
+    user = await UserRepository(session).get_by_telegram_id(callback.from_user.id)
+    if user is None:
+        return
+
+    sub = await session.scalar(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.plan),
+            selectinload(Subscription.xui_client)
+            .selectinload(XUIClientRecord.inbound)
+            .selectinload(XUIInboundRecord.server),
+        )
+        .where(
+            Subscription.id == callback_data.subscription_id,
+            Subscription.user_id == user.id,
+        )
+    )
+    if sub is None or sub.status not in ("active", "pending_activation"):
+        if callback.message:
+            await callback.message.answer("کانفیگ پیدا نشد یا منقضی شده است.")
+        return
+
+    xui_record = sub.xui_client
+    if not xui_record or not xui_record.inbound or not xui_record.inbound.server:
+        if callback.message:
+            await callback.message.answer("❌ سرور متصل به این کانفیگ یافت نشد.")
+        return
+
+    server_obj = xui_record.inbound.server
+    if server_obj.health_status == "deleted" or not server_obj.is_active:
+        if callback.message:
+            await callback.message.answer("❌ سرور خاموش یا حذف شده است.")
+        return
+
+    import uuid
+    from schemas.internal.xui import XUIClient
+    from services.xui.runtime import create_xui_client_for_server, ensure_inbound_server_loaded
+    
+    new_uuid = str(uuid.uuid4())
+    expiry_ms = int(sub.ends_at.timestamp() * 1000) if sub.ends_at else 0
+
+    updated_client = XUIClient(
+        id=xui_record.xui_client_remote_id or xui_record.client_uuid,
+        uuid=new_uuid,
+        email=xui_record.email,
+        limitIp=xui_record.limit_ip or 1,
+        totalGB=sub.volume_bytes,
+        expiryTime=expiry_ms,
+        enable=xui_record.is_active,
+        comment=xui_record.remark or "",
+    )
+
+    try:
+        server = ensure_inbound_server_loaded(xui_record.inbound)
+        async with create_xui_client_for_server(server) as xui_client:
+            await xui_client.update_client(
+                inbound_id=xui_record.inbound.xui_inbound_remote_id,
+                client_id=xui_record.xui_client_remote_id or xui_record.client_uuid,
+                client=updated_client,
+            )
+        xui_record.client_uuid = new_uuid
+        
+        # We must regenerate the sub_link if it contains the old sub_id
+        if sub.sub_link and "/" in sub.sub_link:
+            from services.xui.runtime import build_sub_link
+            new_sub_id = new_uuid.replace("-", "")[:24]
+            sub.sub_link = build_sub_link(server, new_sub_id)
+            xui_record.sub_link = sub.sub_link
+            
+        await session.flush()
+        
+        if callback.message:
+            await callback.message.answer("✅ لینک کانفیگ شما تغییر کرد. از لیست کانفیگ‌ها مجدداً وارد شوید.")
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.error("Failed to reset UUID for sub %s: %s", sub.id, exc)
+        if callback.message:
+            await callback.message.answer("❌ خطا در تغییر لینک (برقراری ارتباط با سرور ناموفق بود).")
+
+
+@router.callback_query(MyConfigCallback.filter(F.action == "toggle_enable"))
+async def toggle_enable_handler(
+    callback: CallbackQuery,
+    callback_data: MyConfigCallback,
+    session: AsyncSession,
+) -> None:
+    """Toggle the enable status of an active config."""
+    await callback.answer("⚙️ در حال تغییر وضعیت...")
+    if callback.from_user is None:
+        return
+
+    user = await UserRepository(session).get_by_telegram_id(callback.from_user.id)
+    if user is None:
+        return
+
+    sub = await session.scalar(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.plan),
+            selectinload(Subscription.xui_client)
+            .selectinload(XUIClientRecord.inbound)
+            .selectinload(XUIInboundRecord.server),
+        )
+        .where(
+            Subscription.id == callback_data.subscription_id,
+            Subscription.user_id == user.id,
+        )
+    )
+    if sub is None or sub.status not in ("active", "pending_activation"):
+        if callback.message:
+            await callback.message.answer("کانفیگ پیدا نشد یا منقضی شده است.")
+        return
+
+    xui_record = sub.xui_client
+    if not xui_record or not xui_record.inbound or not xui_record.inbound.server:
+        if callback.message:
+            await callback.message.answer("❌ سرور متصل به این کانفیگ یافت نشد.")
+        return
+
+    server_obj = xui_record.inbound.server
+    if server_obj.health_status == "deleted" or not server_obj.is_active:
+        if callback.message:
+            await callback.message.answer("❌ سرور خاموش یا حذف شده است.")
+        return
+
+    from schemas.internal.xui import XUIClient
+    from services.xui.runtime import create_xui_client_for_server, ensure_inbound_server_loaded
+    
+    new_enable_status = not xui_record.is_active
+    expiry_ms = int(sub.ends_at.timestamp() * 1000) if sub.ends_at else 0
+
+    updated_client = XUIClient(
+        id=xui_record.xui_client_remote_id or xui_record.client_uuid,
+        uuid=xui_record.client_uuid,
+        email=xui_record.email,
+        limitIp=xui_record.limit_ip or 1,
+        totalGB=sub.volume_bytes,
+        expiryTime=expiry_ms,
+        enable=new_enable_status,
+        comment=xui_record.remark or "",
+    )
+
+    try:
+        server = ensure_inbound_server_loaded(xui_record.inbound)
+        async with create_xui_client_for_server(server) as xui_client:
+            await xui_client.update_client(
+                inbound_id=xui_record.inbound.xui_inbound_remote_id,
+                client_id=xui_record.xui_client_remote_id or xui_record.client_uuid,
+                client=updated_client,
+            )
+        xui_record.is_active = new_enable_status
+        await session.flush()
+        
+        status_text = "روشن" if new_enable_status else "خاموش"
+        if callback.message:
+            await callback.message.answer(f"✅ کانفیگ با موفقیت {status_text} شد. برای اعمال تغییرات از لیست کانفیگ‌ها رفرش کنید.")
+    except Exception as exc:
+        logger.error("Failed to toggle enable for sub %s: %s", sub.id, exc)
+        if callback.message:
+            await callback.message.answer("❌ خطا در اجرای درخواست (برقراری ارتباط با سرور ناموفق بود).")
+
+
 
 
 

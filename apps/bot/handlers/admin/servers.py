@@ -47,6 +47,7 @@ class ServerListPageCallback(CallbackData, prefix="server_list"):
 
 
 @router.message(Command("admin"))
+@router.message(F.text == "پنل مدیریت ⚙️")
 async def admin_main_menu(message: Message) -> None:
     builder = InlineKeyboardBuilder()
     builder.button(text=AdminButtons.MANAGE_SERVERS, callback_data="admin:servers")
@@ -77,7 +78,12 @@ async def admin_main_menu_callback(callback: CallbackQuery) -> None:
     builder.button(text=AdminButtons.BOT_SETTINGS, callback_data="admin:bot_settings")
     builder.button(text=AdminButtons.MANAGE_DISCOUNTS, callback_data="admin:discounts")
     builder.adjust(2)
-    await callback.message.answer(AdminMessages.PANEL_TITLE, reply_markup=builder.as_markup())
+    
+    if callback.message:
+        try:
+            await callback.message.edit_text(AdminMessages.PANEL_TITLE, reply_markup=builder.as_markup())
+        except Exception:
+            await callback.message.answer(AdminMessages.PANEL_TITLE, reply_markup=builder.as_markup())
 
 
 @router.callback_query(F.data == "admin:servers")
@@ -88,7 +94,12 @@ async def admin_servers_menu(callback: CallbackQuery) -> None:
     builder.button(text=AdminButtons.LIST_SERVERS, callback_data=ServerListPageCallback(page=1).pack())
     builder.button(text=AdminButtons.BACK, callback_data="admin:main")
     builder.adjust(1)
-    await callback.message.answer(AdminMessages.SERVER_MANAGEMENT, reply_markup=builder.as_markup())
+    
+    if callback.message:
+        try:
+            await callback.message.edit_text(AdminMessages.SERVER_MANAGEMENT, reply_markup=builder.as_markup())
+        except Exception:
+            await callback.message.answer(AdminMessages.SERVER_MANAGEMENT, reply_markup=builder.as_markup())
 
 
 @router.callback_query(ServerListPageCallback.filter())
