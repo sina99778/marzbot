@@ -672,7 +672,8 @@ async def cancel_and_refund_config(
             selectinload(Subscription.plan),
             selectinload(Subscription.xui_client)
             .selectinload(XUIClientRecord.inbound)
-            .selectinload(XUIInboundRecord.server),
+            .selectinload(XUIInboundRecord.server)
+            .selectinload(XUIServerRecord.credentials),
         )
         .where(
             Subscription.id == callback_data.subscription_id,
@@ -708,12 +709,13 @@ async def cancel_and_refund_config(
                     )
                 xui_record.is_active = False
             except Exception as exc:
-                logger.error("Failed to delete X-UI client on refund: %s", exc)
+                logger.error("Failed to delete X-UI client on refund: %s", exc, exc_info=True)
                 xui_deleted = False
+                xui_error = str(exc)[:150]
 
     if not xui_deleted:
         if callback.message:
-            await callback.message.answer("❌ خطا در حذف کانفیگ از سرور. لطفاً دوباره تلاش کنید.")
+            await callback.message.answer(f"❌ خطا در حذف کانفیگ از سرور:\n{xui_error}")
         return
 
     # Refund to wallet
