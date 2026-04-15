@@ -396,18 +396,58 @@ async def admin_send_msg_submit(
     await state.clear()
 
 
+@router.callback_query(AdminUserActionCallback.filter(F.action == "toggle_admin"))
+async def admin_user_toggle_admin(
+    callback: CallbackQuery,
+    callback_data: AdminUserActionCallback,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    
+    user = await session.scalar(
+        select(User).where(User.id == callback_data.user_id)
+    )
+    if user is None:
+        await callback.message.answer(AdminMessages.USER_NOT_FOUND)
+        return
+        
+    # Toggle logic
+    from core.config import settings
+    # Cannot demote owner
+    if user.telegram_id == settings.owner_telegram_id:
+        await callback.message.answer("❌ نقش مالک اصلی ربات (owner) قابل تغییر نیست.")
+        return
+
+    new_role = "admin" if user.role == "user" else "user"
+    user.role = new_role
+    await session.flush()
+    
+    status_text = "ادمین" if new_role == "admin" else "کاربر عادی"
+    await callback.message.answer(f"✅ نقش کاربر به {status_text} تغییر یافت.")
+    
+    # Reload profile page
+    total_orders = int(
+        await session.scalar(select(func.count()).select_from(Order).where(Order.user_id == user.id)) or 0
+    )
+    await callback.message.edit_text(
+        _build_user_profile_text(user=user, total_orders=total_orders),
+        reply_markup=_build_user_profile_keyboard(user.id, user.status),
+    )
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def _build_user_profile_text(*, user: User, total_orders: int) -> str:
     wallet_balance = user.wallet.balance if user.wallet is not None else Decimal("0")
+    role_text = "ادمین 👑" if user.role == "admin" else ("مالک 💎" if user.role == "owner" else "کاربر عادی 👤")
     return AdminMessages.USER_PROFILE.format(
         name=user.first_name or "-",
         telegram_id=user.telegram_id,
         status=user.status,
         wallet_balance=f"{wallet_balance:.2f}",
         total_orders=total_orders,
-    )
+    ) + f"\n🎖 نقش: {role_text}"
 
 
 def _build_user_profile_keyboard(user_id: UUID, status: str):
@@ -427,6 +467,14 @@ def _build_user_profile_keyboard(user_id: UUID, status: str):
     builder.button(
         text="📩 ارسال پیام",
         callback_data=AdminUserActionCallback(action="send_msg", user_id=user_id).pack(),
+    )
+    # Add toggle admin role button
+    # To determine text, we need the user's current role which isn't passed here.
+    # We should update _build_user_profile_keyboard signature if we want dynamic text. 
+    # For now, we will add a generic "تغییر نقش (ادمین/کاربر)" button.
+    builder.button(
+        text="👑 تغییر نقش (ادمین/کاربر)",
+        callback_data=AdminUserActionCallback(action="toggle_admin", user_id=user_id).pack(),
     )
     builder.button(
         text=AdminButtons.BACK,
