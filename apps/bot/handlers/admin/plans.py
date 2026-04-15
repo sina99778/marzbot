@@ -413,6 +413,124 @@ async def delete_plan(
     await list_plans(callback, PlanListPageCallback(page=callback_data.page), session)
 
 
+class ChangeInboundCallback(CallbackData, prefix="plan_inb"):
+    plan_id: UUID
+    inbound_id: UUID
+    page: int = 1
+
+
+@router.callback_query(PlanActionCallback.filter(F.action == "change_inbound"))
+async def change_inbound_start(
+    callback: CallbackQuery,
+    callback_data: PlanActionCallback,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    plan = await session.scalar(
+        select(Plan)
+        .options(selectinload(Plan.inbound).selectinload(XUIInboundRecord.server))
+        .where(Plan.id == callback_data.plan_id)
+    )
+    if plan is None:
+        await callback.message.answer(AdminMessages.PLAN_NOT_FOUND)
+        return
+
+    # Current inbound info
+    if plan.inbound and plan.inbound.server:
+        current_info = f"{plan.inbound.server.name} — {plan.inbound.remark} ({plan.inbound.protocol})"
+    elif plan.inbound:
+        current_info = f"{plan.inbound.remark} ({plan.inbound.protocol})"
+    else:
+        current_info = "تنظیم نشده ❌"
+
+    # Get all active inbounds
+    from models.xui import XUIServerRecord
+    result = await session.execute(
+        select(XUIInboundRecord)
+        .options(selectinload(XUIInboundRecord.server))
+        .where(XUIInboundRecord.is_active.is_(True))
+        .order_by(XUIInboundRecord.created_at.asc())
+    )
+    inbounds = list(result.scalars().all())
+
+    if not inbounds:
+        await callback.message.answer("❌ هیچ اینباند فعالی وجود ندارد. اول سرور اضافه کنید.")
+        return
+
+    builder = InlineKeyboardBuilder()
+    for inb in inbounds:
+        server_name = inb.server.name if inb.server else "نامشخص"
+        is_current = "✅ " if plan.inbound_id == inb.id else ""
+        builder.button(
+            text=f"{is_current}{server_name} — {inb.remark} ({inb.protocol})",
+            callback_data=ChangeInboundCallback(
+                plan_id=plan.id,
+                inbound_id=inb.id,
+                page=callback_data.page,
+            ).pack(),
+        )
+    builder.button(
+        text="🔙 بازگشت",
+        callback_data=PlanListPageCallback(page=callback_data.page).pack(),
+    )
+    builder.adjust(1)
+
+    await callback.message.answer(
+        f"🔗 تغییر سرور برای پلن «{plan.name}»\n\n"
+        f"سرور فعلی: {current_info}\n\n"
+        "اینباند جدید را انتخاب کنید:",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.callback_query(ChangeInboundCallback.filter())
+async def change_inbound_confirm(
+    callback: CallbackQuery,
+    callback_data: ChangeInboundCallback,
+    session: AsyncSession,
+    admin_user: User,
+) -> None:
+    await callback.answer()
+    plan = await session.get(Plan, callback_data.plan_id)
+    if plan is None:
+        await callback.message.answer(AdminMessages.PLAN_NOT_FOUND)
+        return
+
+    new_inbound = await session.scalar(
+        select(XUIInboundRecord)
+        .options(selectinload(XUIInboundRecord.server))
+        .where(XUIInboundRecord.id == callback_data.inbound_id)
+    )
+    if new_inbound is None:
+        await callback.message.answer("❌ اینباند پیدا نشد.")
+        return
+
+    old_inbound_id = plan.inbound_id
+    plan.inbound_id = new_inbound.id
+    await session.flush()
+
+    await AuditLogRepository(session).log_action(
+        actor_user_id=admin_user.id,
+        action="change_plan_inbound",
+        entity_type="plan",
+        entity_id=plan.id,
+        payload={
+            "old_inbound_id": str(old_inbound_id) if old_inbound_id else None,
+            "new_inbound_id": str(new_inbound.id),
+            "new_server": new_inbound.server.name if new_inbound.server else None,
+        },
+    )
+
+    server_name = new_inbound.server.name if new_inbound.server else "نامشخص"
+    await callback.message.answer(
+        f"✅ سرور پلن «{plan.name}» تغییر کرد.\n\n"
+        f"🖥 سرور: {server_name}\n"
+        f"📡 اینباند: {new_inbound.remark} ({new_inbound.protocol})"
+    )
+
+    await list_plans(callback, PlanListPageCallback(page=callback_data.page), session)
+
+
 def _build_plan_list_keyboard(
     plans: list[Plan],
     *,
@@ -426,10 +544,14 @@ def _build_plan_list_keyboard(
             callback_data=PlanActionCallback(action="toggle", plan_id=plan.id, page=page).pack(),
         )
         builder.button(
-            text=f"✖ حذف {plan.name}",
+            text=f"🔗 سرور",
+            callback_data=PlanActionCallback(action="change_inbound", plan_id=plan.id, page=page).pack(),
+        )
+        builder.button(
+            text=f"✖ حذف",
             callback_data=PlanActionCallback(action="delete", plan_id=plan.id, page=page).pack(),
         )
-    builder.adjust(1)
+    builder.adjust(3)
     add_pagination_controls(
         builder,
         page=page,
