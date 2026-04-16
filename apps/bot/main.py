@@ -15,16 +15,21 @@ from core.config import settings
 from core.database import dispose_database
 
 
+import structlog
+
 def configure_logging() -> None:
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer()
+        ],
     )
 
 
 async def on_startup(bot: Bot) -> None:
     me = await bot.get_me()
-    logging.getLogger(__name__).info("Bot started: id=%s username=@%s", me.id, me.username)
+    structlog.get_logger(__name__).info("Bot started", id=me.id, username=f"@{me.username}")
 
 
 async def on_shutdown(bot: Bot) -> None:

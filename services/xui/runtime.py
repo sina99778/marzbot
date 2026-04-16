@@ -54,117 +54,85 @@ def build_vless_uri(
     # Read stream settings from inbound metadata
     meta = inbound.metadata_ or {}
     stream = meta.get("stream_settings", {})
-    if isinstance(stream, str):
-        import json
-        try:
+    from schemas.internal.xui_stream import StreamSettings
+
+    try:
+        if isinstance(stream, str):
+            import json
             stream = json.loads(stream)
-        except Exception:
-            stream = {}
+        stream_model = StreamSettings.model_validate(stream)
+    except Exception:
+        # Fallback to an empty model if parsing completely fails
+        stream_model = StreamSettings()
 
-    network = stream.get("network", "tcp")
-    security = stream.get("security", "none")
+    network = stream_model.network
+    security = stream_model.security
 
-    # Build query parameters from actual stream settings
+    # Build query parameters
     params: dict[str, str] = {
         "type": network,
         "security": security,
     }
 
     # --- Network-specific settings ---
-    if network == "ws":
-        ws_settings = stream.get("wsSettings", {})
-        path = ws_settings.get("path", "/")
-        params["path"] = path
-        ws_headers = ws_settings.get("headers", {})
-        ws_host = (
-            ws_headers.get("Host")
-            or ws_headers.get("host")
-            or ws_settings.get("host", "")  # some X-UI versions
-        )
+    if network == "ws" and stream_model.wsSettings:
+        params["path"] = stream_model.wsSettings.path
+        ws_host = stream_model.wsSettings.get_host()
         if ws_host:
             params["host"] = ws_host
-    elif network == "grpc":
-        grpc_settings = stream.get("grpcSettings", {})
-        service_name = grpc_settings.get("serviceName", "")
-        if service_name:
-            params["serviceName"] = service_name
-    elif network == "tcp":
-        tcp_settings = stream.get("tcpSettings", {})
-        header = tcp_settings.get("header", {})
-        header_type = header.get("type", "none")
-        if header_type != "none":
-            params["headerType"] = header_type
-    elif network == "kcp":
-        kcp_settings = stream.get("kcpSettings", {})
-        header = kcp_settings.get("header", {})
-        header_type = header.get("type", "none")
-        if header_type != "none":
-            params["headerType"] = header_type
-        seed = kcp_settings.get("seed", "")
-        if seed:
-            params["seed"] = seed
-    elif network in ("http", "h2"):
-        http_settings = stream.get("httpSettings", {})
-        path = http_settings.get("path", "/")
-        params["path"] = path
-        h_host = http_settings.get("host", [])
-        if h_host and isinstance(h_host, list) and h_host[0]:
-            params["host"] = h_host[0]
+            
+    elif network == "grpc" and stream_model.grpcSettings:
+        if stream_model.grpcSettings.serviceName:
+            params["serviceName"] = stream_model.grpcSettings.serviceName
+            
+    elif network == "tcp" and stream_model.tcpSettings:
+        if stream_model.tcpSettings.header.type != "none":
+            params["headerType"] = stream_model.tcpSettings.header.type
+            
+    elif network == "kcp" and stream_model.kcpSettings:
+        if stream_model.kcpSettings.header.type != "none":
+            params["headerType"] = stream_model.kcpSettings.header.type
+        if stream_model.kcpSettings.seed:
+            params["seed"] = stream_model.kcpSettings.seed
+            
+    elif network in ("http", "h2") and stream_model.httpSettings:
+        params["path"] = stream_model.httpSettings.path
+        h_host = stream_model.httpSettings.get_first_host()
+        if h_host:
+            params["host"] = h_host
 
     # --- Security-specific settings ---
-    if security == "tls":
-        tls_settings = stream.get("tlsSettings", {})
-        sni = tls_settings.get("serverName", "")
-        if sni:
-            params["sni"] = sni
-        fp = tls_settings.get("fingerprint", "")
-        if fp:
-            params["fp"] = fp
-        alpn = tls_settings.get("alpn", [])
-        if alpn and isinstance(alpn, list):
-            params["alpn"] = ",".join(alpn)
-    elif security == "reality":
-        reality_settings = stream.get("realitySettings", {})
-        pbk = reality_settings.get("publicKey", "")
-        sid = reality_settings.get("shortId", "")
-        sni = reality_settings.get("serverName", "")
-        fp = reality_settings.get("fingerprint", "")
-        spx = reality_settings.get("spiderX", "")
-        if pbk:
-            params["pbk"] = pbk
-        if sid:
-            params["sid"] = sid
-        if sni:
-            params["sni"] = sni
-        if fp:
-            params["fp"] = fp
-        if spx:
-            params["spx"] = spx
+    if security == "tls" and stream_model.tlsSettings:
+        if stream_model.tlsSettings.serverName:
+            params["sni"] = stream_model.tlsSettings.serverName
+        if stream_model.tlsSettings.fingerprint:
+            params["fp"] = stream_model.tlsSettings.fingerprint
+        if stream_model.tlsSettings.alpn:
+            params["alpn"] = ",".join(stream_model.tlsSettings.alpn)
+            
+    elif security == "reality" and stream_model.realitySettings:
+        r = stream_model.realitySettings
+        if r.publicKey: params["pbk"] = r.publicKey
+        if r.shortId: params["sid"] = r.shortId
+        if r.serverName: params["sni"] = r.serverName
+        if r.fingerprint: params["fp"] = r.fingerprint
+        if r.spiderX: params["spx"] = r.spiderX
 
     # --- External proxy / SNI override ---
-    ext_proxy = stream.get("externalProxy", [])
-    if ext_proxy and isinstance(ext_proxy, list) and len(ext_proxy) > 0:
-        first_proxy = ext_proxy[0]
-        if isinstance(first_proxy, dict):
-            ext_dest = first_proxy.get("dest", "")
-            ext_port = first_proxy.get("port", None)
-            if ext_dest:
-                # External proxy dest is the actual address clients connect to
-                host = ext_dest.split(":")[0] if ":" in ext_dest else ext_dest
-            if ext_port:
-                port = int(ext_port)
+    if stream_model.externalProxy:
+        first_proxy = stream_model.externalProxy[0]
+        if first_proxy.dest:
+            host = first_proxy.dest.split(":")[0] if ":" in first_proxy.dest else first_proxy.dest
+        if first_proxy.port:
+            port = first_proxy.port
 
-            # If "host" param was NOT set (e.g. wsSettings.headers.Host is empty),
-            # but we're using external proxy, the WS Host should be the original
-            # server address (not the CDN/proxy address).
-            if "host" not in params and network == "ws":
-                # Use config_domain or extract from base_url as the WS Host
-                original_host = server.config_domain or _extract_host(server.base_url)
-                if original_host:
-                    params["host"] = original_host
+        if "host" not in params and network == "ws":
+            original_host = server.config_domain or _extract_host(server.base_url)
+            if original_host:
+                params["host"] = original_host
 
-            if "sni" not in params:
-                params["sni"] = host
+        if "sni" not in params:
+            params["sni"] = host
 
     # Build URI
     from urllib.parse import urlencode, quote

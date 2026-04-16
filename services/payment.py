@@ -26,6 +26,7 @@ async def process_successful_payment(
     session: AsyncSession,
     payment: Payment,
     amount_to_credit: Decimal,
+    bot: Bot,
 ) -> None:
     logger.info("[PAYMENT] Processing payment %s (kind=%s, amount=%s)", payment.id, payment.kind, amount_to_credit)
 
@@ -59,7 +60,7 @@ async def process_successful_payment(
     if payment.kind == "direct_purchase":
         logger.info("[PAYMENT] Step 2: Direct purchase — provisioning config")
         try:
-            await _handle_direct_purchase(session, payment)
+            await _handle_direct_purchase(session, payment, bot)
             logger.info("[PAYMENT] Direct purchase provisioning COMPLETED")
         except Exception as exc:
             logger.error("[PAYMENT] Direct purchase provisioning FAILED: %s", exc, exc_info=True)
@@ -71,6 +72,7 @@ async def process_successful_payment(
 async def _handle_direct_purchase(
     session: AsyncSession,
     payment: Payment,
+    bot: Bot,
 ) -> None:
     """Provision a subscription after a successful direct purchase payment."""
     purchase_meta = payment.callback_payload
@@ -145,7 +147,6 @@ async def _handle_direct_purchase(
     logger.info("[PROVISION] Wallet debited OK")
 
     # Provision
-    bot = Bot(token=settings.bot_token.get_secret_value())
     try:
         provisioning_manager = ProvisioningManager(session)
         logger.info("[PROVISION] Calling provision_subscription...")
@@ -179,8 +180,6 @@ async def _handle_direct_purchase(
         except Exception as bot_exc:
             logger.error("[PROVISION] Failed to send refund message: %s", bot_exc)
         return
-    finally:
-        await bot.session.close()
 
     order.status = "provisioned"
 
@@ -189,7 +188,6 @@ async def _handle_direct_purchase(
     vless_uri = provisioned.vless_uri
 
     # Send config to user
-    bot2 = Bot(token=settings.bot_token.get_secret_value())
     try:
         text = (
             "✅ کانفیگ شما آماده است!\n\n"
@@ -204,7 +202,7 @@ async def _handle_direct_purchase(
             f"🔗 ساب لینک:\n{sub_link}\n\n"
             f"📋 کانفیگ مستقیم:\n{vless_uri}"
         )
-        await bot2.send_message(user.telegram_id, text)
+        await bot.send_message(user.telegram_id, text)
         logger.info("[PROVISION] Config sent to user %s", user.telegram_id)
 
         # QR Code
@@ -212,7 +210,7 @@ async def _handle_direct_purchase(
         from aiogram.types import BufferedInputFile
         qr_bytes = make_qr_bytes(vless_uri)
         if qr_bytes:
-            await bot2.send_photo(
+            await bot.send_photo(
                 chat_id=user.telegram_id,
                 photo=BufferedInputFile(qr_bytes, filename="config_qr.png"),
                 caption=f"📷 QR کد کانفیگ {config_name}",
@@ -229,11 +227,9 @@ async def _handle_direct_purchase(
             f"💳 روش: درگاه پرداخت"
         )
         try:
-            await notify_admins(session, bot2, admin_text)
+            await notify_admins(session, bot, admin_text)
         except Exception as exc:
             logger.warning("[PROVISION] Failed to notify admins: %s", exc)
 
     except Exception as exc:
         logger.error("[PROVISION] Failed to send config to user: %s", exc, exc_info=True)
-    finally:
-        await bot2.session.close()

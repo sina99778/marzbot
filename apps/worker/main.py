@@ -16,8 +16,19 @@ from core.config import settings
 from core.database import AsyncSessionFactory
 
 
+import structlog
+
+def configure_logging() -> None:
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer()
+        ],
+    )
+
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    configure_logging()
     bot = Bot(token=settings.bot_token.get_secret_value())
 
     scheduler = AsyncIOScheduler()

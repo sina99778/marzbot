@@ -117,10 +117,12 @@ async def handle_nowpayments_ipn(
     logger.info("IPN: Processing payment %s — amount_to_credit=%s", payment.id, amount_to_credit)
 
     try:
+        bot = request.app.state.bot
         await process_successful_payment(
             session=session,
             payment=payment,
             amount_to_credit=amount_to_credit,
+            bot=bot,
         )
         logger.info("IPN: Payment %s processed SUCCESSFULLY", payment.id)
     except Exception as exc:
