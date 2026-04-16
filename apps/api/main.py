@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     await bot.session.close()
 
 
-app = FastAPI(title="telegramsellbot-api", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="marzbot-api", version="0.1.0", lifespan=lifespan)
 app.include_router(miniapp_users_router, prefix="/api/miniapp", tags=["miniapp"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(nowpayments_webhook_router, prefix="/api/webhooks", tags=["webhooks"])

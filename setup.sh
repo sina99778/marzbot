@@ -8,10 +8,10 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 SETUP_VERSION="2026-04-12-3"
-REPO_URL="https://github.com/sina99778/telegramsellbot.git"
+REPO_URL="https://github.com/sina99778/marzbot.git"
 REPO_BRANCH="main"
-INSTALL_DIR="/opt/telegramsellbot"
-TMP_DIR="/tmp/telegramsellbot-sync"
+INSTALL_DIR="/opt/marzbot"
+TMP_DIR="/tmp/marzbot-sync"
 MODE="${1:-install}"
 
 error() {

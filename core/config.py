@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     app_secret_key: SecretStr = SecretStr("CHANGE_ME_BASE64_32BYTE_FERNET_KEY")
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/telegramsellbot"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/marzbot"
     database_echo: bool = False
     database_pool_size: int = 10
     database_max_overflow: int = 20

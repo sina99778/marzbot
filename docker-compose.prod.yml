@@ -1,18 +1,18 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: telegramsellbot-postgres
+    container_name: marzbot-postgres
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-telegramsellbot}
-      POSTGRES_USER: ${POSTGRES_USER:-telegramsellbot}
+      POSTGRES_DB: ${POSTGRES_DB:-marzbot}
+      POSTGRES_USER: ${POSTGRES_USER:-marzbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-telegramsellbot} -d ${POSTGRES_DB:-telegramsellbot}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-marzbot} -d ${POSTGRES_DB:-marzbot}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -20,7 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: telegramsellbot-redis
+    container_name: marzbot-redis
     restart: unless-stopped
     env_file:
       - .env
@@ -38,8 +38,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: telegramsellbot:latest
-    container_name: telegramsellbot-api
+    image: marzbot:latest
+    container_name: marzbot-api
     restart: unless-stopped
     env_file:
       - .env
@@ -59,8 +59,8 @@ services:
       start_period: 20s
 
   bot:
-    image: telegramsellbot:latest
-    container_name: telegramsellbot-bot
+    image: marzbot:latest
+    container_name: marzbot-bot
     restart: unless-stopped
     env_file:
       - .env
@@ -80,8 +80,8 @@ services:
       start_period: 15s
 
   worker:
-    image: telegramsellbot:latest
-    container_name: telegramsellbot-worker
+    image: marzbot:latest
+    container_name: marzbot-worker
     restart: unless-stopped
     env_file:
       - .env

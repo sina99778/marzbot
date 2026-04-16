@@ -6,8 +6,8 @@ ENV_FILE="${PROJECT_DIR}/.env"
 COMPOSE_FILE="${PROJECT_DIR}/docker-compose.prod.yml"
 SETUP_SCRIPT="${PROJECT_DIR}/setup.sh"
 DEPLOY_SCRIPT="${PROJECT_DIR}/deploy.sh"
-NGINX_SITE_PATH="/etc/nginx/sites-available/telegramsellbot.conf"
-NGINX_SITE_LINK="/etc/nginx/sites-enabled/telegramsellbot.conf"
+NGINX_SITE_PATH="/etc/nginx/sites-available/marzbot.conf"
+NGINX_SITE_LINK="/etc/nginx/sites-enabled/marzbot.conf"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,7 +21,7 @@ print_header() {
   clear
   echo -e "${BOLD}${CYAN}"
   echo "==============================================="
-  echo "      TelegramSellBot Easy Installer"
+  echo "      Marzbot Easy Installer"
   echo "==============================================="
   echo -e "${NC}"
 }
@@ -98,12 +98,12 @@ wait_for_postgres() {
   local db_user db_name attempt max_attempts
   db_user="$(read_env_value POSTGRES_USER)"
   db_name="$(read_env_value POSTGRES_DB)"
-  db_user="${db_user:-telegramsellbot}"
-  db_name="${db_name:-telegramsellbot}"
+  db_user="${db_user:-marzbot}"
+  db_name="${db_name:-marzbot}"
   max_attempts=30
 
   for attempt in $(seq 1 "${max_attempts}"); do
-    if docker exec telegramsellbot-postgres pg_isready -U "${db_user}" -d "${db_name}" >/dev/null 2>&1; then
+    if docker exec marzbot-postgres pg_isready -U "${db_user}" -d "${db_name}" >/dev/null 2>&1; then
       success "PostgreSQL is ready."
       return 0
     fi
@@ -232,8 +232,8 @@ setup_env_builder() {
   admin_api_key="${current_admin_api_key:-$(generate_password)}"
   nowpayments_ipn_secret="${current_nowpayments_ipn_secret:-$(generate_password)}"
 
-  postgres_user="telegramsellbot"
-  postgres_db="telegramsellbot"
+  postgres_user="marzbot"
+  postgres_db="marzbot"
   database_url="postgresql+asyncpg://${postgres_user}:${postgres_password}@postgres:5432/${postgres_db}"
   redis_url="redis://default:${redis_password}@redis:6379/0"
   webhook_url="https://${domain_name}/api/webhooks/nowpayments"
@@ -443,13 +443,13 @@ full_uninstall() {
     run_compose down -v --remove-orphans || true
   fi
 
-  docker rm -f telegramsellbot-postgres telegramsellbot-redis telegramsellbot-api telegramsellbot-bot telegramsellbot-worker >/dev/null 2>&1 || true
-  docker volume rm telegramsellbot_postgres_data telegramsellbot_redis_data >/dev/null 2>&1 || true
+  docker rm -f marzbot-postgres marzbot-redis marzbot-api marzbot-bot marzbot-worker >/dev/null 2>&1 || true
+  docker volume rm marzbot_postgres_data marzbot_redis_data >/dev/null 2>&1 || true
   rm -f "${NGINX_SITE_LINK}" "${NGINX_SITE_PATH}"
   systemctl reload nginx || true
   rm -rf "${PROJECT_DIR}"
 
-  success "TelegramSellBot was removed from this server."
+  success "Marzbot was removed from this server."
   exit 0
 }
 
@@ -457,9 +457,9 @@ db_status() {
   print_header
   info "Database containers and volumes status"
   echo
-  docker ps -a --format "table {{.Names}}\t{{.Status}}" | grep telegramsellbot || true
+  docker ps -a --format "table {{.Names}}\t{{.Status}}" | grep marzbot || true
   echo
-  docker volume ls --format "table {{.Name}}" | grep telegramsellbot || true
+  docker volume ls --format "table {{.Name}}" | grep marzbot || true
   echo
   pause
 }
@@ -484,7 +484,7 @@ db_restart_postgres() {
 
 db_reset_database() {
   print_header
-  warn "This will DELETE all PostgreSQL data for TelegramSellBot."
+  warn "This will DELETE all PostgreSQL data for Marzbot."
   warn "Only use this if you do not need existing users, orders, wallets, tickets, or broadcasts."
   echo
   read -r -p "Type RESET to continue: " confirm
@@ -495,7 +495,7 @@ db_reset_database() {
   fi
 
   run_compose down -v --remove-orphans || true
-  docker volume rm telegramsellbot_postgres_data >/dev/null 2>&1 || true
+  docker volume rm marzbot_postgres_data >/dev/null 2>&1 || true
   success "Database volume removed."
   info "Recreating postgres and redis..."
   run_compose up -d postgres redis

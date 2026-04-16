@@ -3,7 +3,7 @@ requires = ["setuptools>=69.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "telegramsellbot"
+name = "marzbot"
 version = "0.1.0"
 description = "Premium Telegram bot for selling and managing VPN/Proxy configurations with Sanaei X-UI and NOWPayments."
 readme = "README.md"

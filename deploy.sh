@@ -6,7 +6,7 @@ cd "${PROJECT_DIR}"
 
 MODE="${1:-full}"
 COMPOSE_IMPL=""
-POSTGRES_CONTAINER="telegramsellbot-postgres"
+POSTGRES_CONTAINER="marzbot-postgres"
 
 if docker compose version >/dev/null 2>&1; then
   COMPOSE_CMD=(docker compose)
@@ -33,8 +33,8 @@ wait_for_postgres() {
   local db_user db_name attempt max_attempts
   db_user="$(read_env_value POSTGRES_USER)"
   db_name="$(read_env_value POSTGRES_DB)"
-  db_user="${db_user:-telegramsellbot}"
-  db_name="${db_name:-telegramsellbot}"
+  db_user="${db_user:-marzbot}"
+  db_name="${db_name:-marzbot}"
   max_attempts=30
 
   for attempt in $(seq 1 "${max_attempts}"); do
@@ -70,7 +70,7 @@ full_deploy() {
   if [[ "${COMPOSE_IMPL}" == "legacy" ]]; then
     echo "Legacy docker-compose detected; applying compatibility cleanup before deploy..."
     "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml down --remove-orphans || true
-    docker rm -f telegramsellbot-postgres telegramsellbot-redis telegramsellbot-api telegramsellbot-bot telegramsellbot-worker >/dev/null 2>&1 || true
+    docker rm -f marzbot-postgres marzbot-redis marzbot-api marzbot-bot marzbot-worker >/dev/null 2>&1 || true
   fi
 
   "${COMPOSE_CMD[@]}" -f docker-compose.prod.yml up -d --build postgres redis
@@ -84,13 +84,13 @@ full_deploy() {
   fi
 
   if [[ "${DB_BOOTSTRAP_EXIT_CODE}" -ne 0 ]]; then
-    if docker volume ls --format '{{.Name}}' | grep -q '^telegramsellbot_postgres_data$'; then
+    if docker volume ls --format '{{.Name}}' | grep -q '^marzbot_postgres_data$'; then
       echo
       echo "Database bootstrap failed while an existing PostgreSQL volume is present."
       echo "Most likely cause: POSTGRES_PASSWORD in .env no longer matches the password stored in the existing database volume."
       echo
       echo "If this is a fresh install and you do NOT need old data, run:"
-      echo "  docker volume rm telegramsellbot_postgres_data"
+      echo "  docker volume rm marzbot_postgres_data"
       echo "Then rerun the installer."
       echo
       echo "If you need the old data, restore the original POSTGRES_PASSWORD and DATABASE_URL values in .env, then deploy again."
